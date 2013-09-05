@@ -1,6 +1,7 @@
-#include "baxterLimb.h"
-#include "featureDetector.h"
+#include "searchgeometry.h"
+#include "rosCamWrap.h"
 #include "baxterGripper.h"
+#include "baxterLimb.h"
 
 class SearchControl
 {
@@ -9,7 +10,7 @@ class SearchControl
     // Search Geometry should be set and checked to ensure valid choices are made
     
 public:
-    SearchControl(BaxterLimb&, BaxterLimb&, BaxterCamera&); //cam hand, other hand, cam
+    SearchControl(BaxterLimb, BaxterLimb, BaxterCamera&); //cam hand, other hand, cam
     
     //Use this to define geometry
     SearchGeometry geometry;
@@ -20,8 +21,8 @@ public:
 private:
     SearchControl(); //no access to default constructor
     
-    BaxterLimb _cam_hand;
-    BaxterLimb _manip_hand;
+    BaxterLimb* _cam_hand;
+    BaxterLimb* _manip_hand;
     BaxterCamera _search_cam;
     
     //State trackers
@@ -47,10 +48,10 @@ SearchControl::SearchControl()
         You should never see this error message.");
 }
 
-SearchControl::SearchControl(BaxterLimb& a, BaxterLimb& b, BaxterCamera& cam)
+SearchControl::SearchControl(BaxterLimb a, BaxterLimb b, BaxterCamera& cam)
 {
-    _cam_hand = a;
-    _manip_hand = b;
+    _cam_hand = &a;
+    _manip_hand = &b;
     _search_cam = cam;
 }
 

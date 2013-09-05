@@ -7,10 +7,12 @@
 #include <boost/algorithm/string.hpp>
 #include <typeinfo>
 
-
 struct BoundingBox {cv::Point2d corners[4];};
 struct BoundingBox_Size {cv::Point2d origin; double height; double width;};
 struct pt_line {cv::Point2d pt1; cv::Point2d pt2;};
+
+#ifndef GEOMETRY_TYPES
+#define GEOMETRY_TYPES
 
 struct Point{ double x; double y; double z; };
 struct Quaternion{ double x; double y; double z; double w; };
@@ -19,6 +21,8 @@ struct Twist{ Point linear; Point angular; };
 struct Wrench{ Point force; Point torque; };
 struct PRY{ double pitch; double roll; double yaw; };
 struct PRYPose{ Point point; PRY pry; };
+
+#endif
 
 #ifndef SEARCHGEOMETRY_H
 #define SEARCHGEOMETRY_H

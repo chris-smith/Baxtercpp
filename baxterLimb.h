@@ -10,13 +10,23 @@
 #include <baxter_msgs/SolvePositionIK.h>
 #include <fstream>
 #include <math.h>
-#include "searchgeometry.h" //defines Point, Pose, PRYPose, etc
 
 #define numJoints 7
 #define FAST true
 #define SLOW false
-#define QUICKLY 1.5
-#define ACCURATELY 1/QUICKLY
+
+#ifndef GEOMETRY_TYPES
+#define GEOMETRY_TYPES
+
+struct Point{ double x; double y; double z; };
+struct Quaternion{ double x; double y; double z; double w; };
+struct Pose{ Point point; Quaternion quaternion; };
+struct Twist{ Point linear; Point angular; };
+struct Wrench{ Point force; Point torque; };
+struct PRY{ double pitch; double roll; double yaw; };
+struct PRYPose{ Point point; PRY pry; };
+
+#endif
 
 /*------------------------------------------
  * Positive x direction --> Away from front plate
@@ -34,6 +44,11 @@ struct JointVelocities{ std::vector<std::string> names; std::vector<double> velo
 struct Gains{ double kp; double ki; double kd; };
 std::string joint_ids[numJoints] = {"_s0","_s1","_e0","_e1","_w0","_w1","_w2"};
 
+Quaternion toQuat(PRY);                             //convert pitch, roll, yaw to quaternion
+PRY toPRY(Quaternion);                              //convert quaternion to pitch, roll, yaw
+
+#ifndef VECTOR_MATH
+#define VECTOR_MATH
 std::vector<double> v_difference(std::vector<double>,std::vector<double>);
 std::vector<double> v_sum(std::vector<double>,std::vector<double>);
 std::vector<double> product(std::vector<double>, double);
@@ -42,58 +57,63 @@ void v_print(std::vector<double>);
 void v_print(std::vector<double>, std::string);
 double limit(double, double); //limits val to max. preserves sign
 void to_file(std::vector<double>, std::string, bool);
+#endif
+
+#ifndef BAXTER_LIMB
+#define BAXTER_LIMB
 
 class BaxterLimb
 {
 public:
-    BaxterLimb();
-    BaxterLimb(ros::NodeHandle,std::string,uint); //node handle, side, buffer size
-    BaxterLimb(std::string);
+    BaxterLimb(ros::NodeHandle,std::string,uint);       //node handle, side, buffer size
+    BaxterLimb(std::string);                            //side
     
     void Init();
     
-    std::vector<double> joint_angles();             //return _joint_angle
-    std::vector<double> joint_velocities();         //return _joint_velocity
-    std::vector<double> joint_efforts();            //return _joint_effort
-    std::vector<std::string> joint_names();         //return _joint_names
-    Pose endpoint_pose();               //return endpoint pose
-    Twist endpoint_velocity();          //return endpoint velocity
-    Wrench endpoint_effort();           //return endpoint effort
-    unsigned short state_rate();        //return _state_rate
+    std::vector<double> joint_angles();                 //return _joint_angle
+    std::vector<double> joint_velocities();             //return _joint_velocity
+    std::vector<double> joint_efforts();                //return _joint_effort
+    std::vector<std::string> joint_names();             //return _joint_names
+    Pose endpoint_pose();                               //return endpoint pose
+    Twist endpoint_velocity();                          //return endpoint velocity
+    Wrench endpoint_effort();                           //return endpoint effort
+    unsigned short state_rate();                        //return _state_rate
     
-    Quaternion toQuat(PRY); //convert pitch, roll, yaw to quaternion
-    PRY toPRY(Quaternion); //convert quaternion to pitch, roll, yaw
+    void set_joint_position_mode();                     //set limb to use position controller
+    void set_joint_velocity_mode();                     //set limb to use velocity controller
+    void set_joint_positions(JointPositions);           //moves using position controller. Sets mode
+    void set_joint_velocities(JointVelocities);         //moves using velocity controller. Sets mode
+    void set_joint_pid(std::string, Gains);             //set _pid gains for joint
+    Gains get_joint_pid(std::string joint);             //get _pid value for joint
+    void set_allowable_error(std::vector<double>);      //set maximum errors allowed to be considered "there"
+    void set_allowable_error(double);                   //set blanket maximum error allowed to be considered "there"
+    void set_max_velocity(std::vector<double>);         //set maximum velocity allowed for each joint
+    void set_max_velocity(double);                      //set blanket maximum velocity allowed for each joint
+    void set_max_acceleration(std::vector<double>);     //set maximum acceleration allowed for each joint
+    void set_max_acceleration(double);                  //set blanket maximum acceleration allowed for each joint
     
-    void set_joint_position_mode();             //set limb to use position controller
-    void set_joint_velocity_mode();             //set limb to use velocity controller
-    void set_joint_positions(JointPositions);   //moves using position controller. Sets mode
-    void set_joint_velocities(JointVelocities); //moves using velocity controller. Sets mode
-    void set_joint_pid(std::string, Gains); //set _pid gains for joint
-    Gains get_joint_pid(std::string joint); //get _pid value for joint
-    void set_allowable_error(std::vector<double>); //set maximum errors allowed to be considered "there"
-    void set_allowable_error(double); //set blanket maximum error allowed to be considered "there"
-    void set_max_velocity(std::vector<double>); //set maximum velocity allowed for each joint
-    void set_max_velocity(double); //set blanket maximum velocity allowed for each joint
-    void set_max_acceleration(std::vector<double>); //set maximum acceleration allowed for each joint
-    void set_max_acceleration(double); //set blanket maximum acceleration allowed for each joint
+    JointPositions get_position(PRYPose);               //returns joint angles to reach PRYPose
+    void set_position(PRYPose, bool, ros::Duration);    //moves endpoint to the specified position fast or slow
     
-    JointPositions get_position(PRYPose); //returns joint angles to reach Pose
-    void set_position(PRYPose, bool, ros::Duration); //moves endpoint to the specified position fast or slow
-    
-    
-    // uses velocity controller to move to specified positions
-    // until error for joints is <= _allowed_error or until timeout
-    // returns -1 if timeout occured.
+    /*    Controllers
+     *      
+     * uses velocity controller to move to specified positions
+     * until error for joints is <= _allowed_error or until timeout
+     * returns -1 if timeout occured. 
+     ************************************************************/
     int quickly_to_position(JointPositions, ros::Duration); 
-    // Similar to the above except the following
-    //  moves until joint error is <= _allowed_error/2
-    //  uses 0.5(_pid)
+    /* Similar to the above except the following
+     *  moves until joint error is <= _allowed_error/4
+     *  uses 0.5(_pid)
+     *****************************************************/
     int accurate_to_position(JointPositions, ros::Duration);
     
     //computes pid. If bool is true, does so for "quick". If false, for "accurate"
+    //Receives arguments error, integral, derivative, FAST/SLOW
     std::vector<double> compute_gains(std::vector<double>, std::vector<double>, std::vector<double>, bool);
     
 private:
+    BaxterLimb();
     bool _set; //true if any subscribers have returned data yet
     
     std::string _name; //name of limb (left, right)
@@ -131,11 +151,11 @@ private:
     const char* _max_error(std::vector<double>); //returns joint name and error of largest error
 };
 
+#endif
+
 BaxterLimb::BaxterLimb()
 {
-    _name = "left";
-    _bufferSize = 1;
-    Init();
+    ROS_ERROR("Private Default Constructor -- Should never be called");
 }
 
 BaxterLimb::BaxterLimb(ros::NodeHandle nh,std::string name,uint bufferSize)
@@ -368,7 +388,7 @@ Gains BaxterLimb::get_joint_pid(std::string name)
         i++;
         if(i >= numJoints)
         {
-            ROS_ERROR("Tried to set PID for unknown joint [%s]", name.c_str());
+            ROS_ERROR("Tried to get PID for unknown joint [%s]", name.c_str());
             return temp;
         }
     }
@@ -385,11 +405,11 @@ JointPositions BaxterLimb::get_position(PRYPose x)
     Pose mypose;
     mypose.point = x.point;
     mypose.quaternion = toQuat(x.pry);
-    //std::cout<<"\n";
+//     std::cout<<"\n";
     posestamp.pose.position.x = mypose.point.x;
-    //std::cout<<mypose.point.x<<" ";
+//     std::cout<<mypose.point.x<<" ";
     posestamp.pose.position.y = mypose.point.y;
-    //std::cout<<mypose.point.y<<" ";
+//     std::cout<<mypose.point.y<<" ";
     posestamp.pose.position.z = mypose.point.z;
 //     std::cout<<mypose.point.z<<" ";
     posestamp.pose.orientation.x = mypose.quaternion.x;
@@ -562,11 +582,11 @@ int BaxterLimb::quickly_to_position(JointPositions desired, ros::Duration timeou
     std::vector<double> derivative(position.size(),0);
     std::vector<double> last_vel = joint_velocities();
     std::vector<double> accel(position.size(),0);
-    //std::vector<double> model_vel (position.size(),0); //velocity output from model before limiting
+    
     JointVelocities output;
     output.names = desired.names;
     //v_print(integral);
-    //THERE IS SOME LOGIC ERROR HERE. OUTPUT VELOCITY IS ALWAYS POSITIVE??!?
+    
     while( !_in_range(error,FAST) && ( ros::Time::now() - start < timeout ))
     {
         dt = ros::Time::now() - last;
@@ -580,6 +600,7 @@ int BaxterLimb::quickly_to_position(JointPositions desired, ros::Duration timeou
         
         output.velocities = compute_gains(error, integral, derivative, FAST);
         _limit_acceleration(output.velocities, last_vel, toSec(dt.nsec));
+        //v_print(joint_angles(), "current angles");
         
         set_joint_velocities(output);
         
@@ -644,7 +665,12 @@ int BaxterLimb::accurate_to_position(JointPositions desired, ros::Duration timeo
     return -1;
 }
 
-Quaternion BaxterLimb::toQuat(PRY pry)
+
+/*----------------------------------------------------------------------
+ * Everything after this line is not a part of the BaxterLimb Class
+ * ---------------------------------------------------------------------*/
+
+Quaternion toQuat(PRY pry)
 {
     Quaternion quat;
     double p = pry.pitch/2;
@@ -657,7 +683,7 @@ Quaternion BaxterLimb::toQuat(PRY pry)
     return quat;
 }
     
-PRY BaxterLimb::toPRY(Quaternion quat)
+PRY toPRY(Quaternion quat)
 {
     PRY pry;
     double q0 = quat.w;
@@ -669,11 +695,6 @@ PRY BaxterLimb::toPRY(Quaternion quat)
     pry.yaw = atan2(2*(q0*q3 + q1*q2),1-2*(q2*q2 + q3*q3));
     return pry;
 }
-
-/*----------------------------------------------------------------------
- * Everything after this line is not a part of the BaxterLimb Class
- * ---------------------------------------------------------------------*/
-
 
 void v_print(std::vector<double> x)
 {
