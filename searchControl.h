@@ -1,7 +1,9 @@
 #include "searchgeometry.h"
 #include "rosCamWrap.h"
-#include "baxterGripper.h"
 #include "baxterLimb.h"
+
+#ifndef SEARCH_CONTROL
+#define SEARCH_CONTROL
 
 class SearchControl
 {
@@ -39,6 +41,9 @@ private:
     void _verify_piece();                                //  _state == 2
     void _grab_piece();                                  //  _state == 3
     void _deposit_piece();                               //  _state == 4
+    
+    //Called by Search Functions
+    bool _object();                                      //  looks for an object in _search_cam
 };
 
 SearchControl::SearchControl()
@@ -53,6 +58,7 @@ SearchControl::SearchControl(BaxterLimb a, BaxterLimb b, BaxterCamera& cam)
     _cam_hand = &a;
     _manip_hand = &b;
     _search_cam = cam;
+    _state = 0;
 }
 
 void SearchControl::search()
@@ -98,12 +104,16 @@ void SearchControl::search()
 void SearchControl::_init_search()
 {
     _search_initialized = true;
+    _state = 0;
 }
 
 void SearchControl::_search()
 {
     //  _state == 0
-    PRYPose new_position;    
+    if(_object());
+        //state = 1
+    else
+        PRYPose new_position;    
 }
     
 void SearchControl::_move_to_piece()
@@ -125,3 +135,16 @@ void SearchControl::_deposit_piece()
 {
     //  _state == 4
 }
+
+bool SearchControl::_object()
+{
+    cv::Mat scene = _search_cam.cvImage();
+    cv::Mat grey;
+    cv::cvtColor(scene, grey, CV_BGR2GRAY);
+    cv:threshold(grey, grey, 0, 50, cv::THRESH_BINARY);
+    imshow("threshhhhh", grey);
+    cv::waitKey(10);
+    
+}
+
+#endif

@@ -80,8 +80,6 @@ private:
     
 };
 
-#endif
-
 SearchGeometry::SearchGeometry()
 {
     Init();
@@ -389,3 +387,5 @@ void SearchGeometry::ResetDepositBox()
 {
     _depositBox.setTo(0);
 }
+
+#endif

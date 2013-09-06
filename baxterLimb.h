@@ -11,6 +11,9 @@
 #include <fstream>
 #include <math.h>
 
+//each limb has a gripper
+#include "baxterGripper.h"
+
 #define numJoints 7
 #define FAST true
 #define SLOW false
@@ -67,6 +70,9 @@ class BaxterLimb
 public:
     BaxterLimb(ros::NodeHandle,std::string,uint);       //node handle, side, buffer size
     BaxterLimb(std::string);                            //side
+    ~BaxterLimb();
+    
+    BaxterGripper* gripper;
     
     void Init();
     
@@ -151,7 +157,6 @@ private:
     const char* _max_error(std::vector<double>); //returns joint name and error of largest error
 };
 
-#endif
 
 BaxterLimb::BaxterLimb()
 {
@@ -173,6 +178,11 @@ BaxterLimb::BaxterLimb(std::string name)
     Init();
 }
 
+BaxterLimb::~BaxterLimb()
+{
+    delete gripper;
+}
+
 void BaxterLimb::Init()
 {
     ros::Rate r(10);
@@ -192,6 +202,8 @@ void BaxterLimb::Init()
     _pub_joint_mode = _nh.advertise<baxter_msgs::JointCommandMode>(topic+"/joint_command_mode", 10);
     _pub_joint_position = _nh.advertise<baxter_msgs::JointPositions>(topic+"/command_joint_angles",10);
     _pub_joint_velocity = _nh.advertise<baxter_msgs::JointVelocities>(topic+"/command_joint_velocities",10);
+
+    gripper = new BaxterGripper(_name);
 }
 
 void BaxterLimb::_set_names()
@@ -450,7 +462,7 @@ void BaxterLimb::set_position(PRYPose mypose, bool quick, ros::Duration timeout)
     if (quick)
     {    
         quickly_to_position(positions, timeout);
-        accurate_to_position(positions, timeout); 
+        //accurate_to_position(positions, timeout); 
     }
     else
         accurate_to_position(positions, timeout);
@@ -777,3 +789,5 @@ std::vector<double> quotient(std::vector<double> x, double y)
     }
     return temp;
 }
+
+#endif
