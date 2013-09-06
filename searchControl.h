@@ -12,7 +12,7 @@ class SearchControl
     // Search Geometry should be set and checked to ensure valid choices are made
     
 public:
-    SearchControl(BaxterLimb, BaxterLimb, BaxterCamera&); //cam hand, other hand, cam
+    SearchControl(BaxterLimb, BaxterLimb, BaxterCamera); //cam hand, other hand, cam
     
     //Use this to define geometry
     SearchGeometry geometry;
@@ -25,7 +25,7 @@ private:
     
     BaxterLimb* _cam_hand;
     BaxterLimb* _manip_hand;
-    BaxterCamera _search_cam;
+    BaxterCamera* _search_cam;
     
     //State trackers
     uchar _state;            //  {0: searching for piece, 1: found piece & moving over,
@@ -53,11 +53,11 @@ SearchControl::SearchControl()
         You should never see this error message.");
 }
 
-SearchControl::SearchControl(BaxterLimb a, BaxterLimb b, BaxterCamera& cam)
+SearchControl::SearchControl(BaxterLimb a, BaxterLimb b, BaxterCamera cam)
 {
     _cam_hand = &a;
     _manip_hand = &b;
-    _search_cam = cam;
+    _search_cam = &cam;
     _state = 0;
 }
 
@@ -138,12 +138,12 @@ void SearchControl::_deposit_piece()
 
 bool SearchControl::_object()
 {
-    cv::Mat scene = _search_cam.cvImage();
+    cv::Mat scene = _search_cam->cvImage();
     cv::Mat grey;
     cv::cvtColor(scene, grey, CV_BGR2GRAY);
     cv:threshold(grey, grey, 0, 50, cv::THRESH_BINARY);
     imshow("threshhhhh", grey);
-    cv::waitKey(10);
+    cv::waitKey(10000);
     
 }
 

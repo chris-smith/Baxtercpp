@@ -496,10 +496,11 @@ std::vector<double> BaxterLimb::compute_gains(std::vector<double> error, std::ve
     //temp = kp*error + ki*integral + kd*derivative
     std::vector<double> temp(error.size(),0);
     if (quick){
+        //NO Integral term for this
         for(int i = 0; i < error.size(); i++)
         {
             temp[i] = error[i]*_pid[i].kp;
-            temp[i] += integral[i]*_pid[i].ki;
+            //temp[i] += integral[i]*_pid[i].ki;
             temp[i] += derivative[i]*_pid[i].kd;
         }
     }
