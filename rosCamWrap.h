@@ -115,7 +115,19 @@ void BaxterCamera::Init()
     std::string topic = "/cameras/"+_name+"/image";
     _show = false;
     cv::namedWindow(WINDOW, CV_WINDOW_AUTOSIZE);
+    _img.height = 0;
     _sub = _nh.subscribe(topic, _bufferSize, &BaxterCamera::_callback, this);
+    ros::Duration timeout(2.0);
+    ros::Time begin = ros::Time::now();
+    //wait for an image or timeout
+    while ((ros::Time::now() - begin < timeout) && (_img.height == 0))
+    {
+        ros::Duration(0.1).sleep();
+        ros::spinOnce();
+    }
+    
+    if (_img.height == 0)
+        ROS_ERROR("Timed Out: Unable to start subscription to [%s]", topic.c_str());
 }
 
 void BaxterCamera::_callback(const sensor_msgs::Image::ConstPtr& msg)
@@ -138,7 +150,7 @@ void BaxterCamera::_callback(const sensor_msgs::Image::ConstPtr& msg)
         cv::imshow(WINDOW, cv_ptr->image);
         cv::waitKey(10);
     }
-    return;
+    
 }
 
 cv_bridge::CvImagePtr BaxterCamera::_getCvImage()
