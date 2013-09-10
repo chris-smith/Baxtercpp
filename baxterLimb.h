@@ -119,6 +119,7 @@ public:
     //computes pid. If bool is true, does so for "quick". If false, for "accurate"
     //Receives arguments error, integral, derivative, FAST/SLOW
     std::vector<double> compute_gains(std::vector<double>, std::vector<double>, std::vector<double>, bool);
+    bool in_range(std::vector<double>); //exposed version of _in_range. assumes fast
     
 private:
     BaxterLimb();
@@ -408,6 +409,18 @@ Gains BaxterLimb::get_joint_pid(std::string name)
     }
     
     return _pid[i];
+}
+
+
+bool BaxterLimb::in_range(std::vector<double> error)
+{
+    bool temp = true;
+    for(int i = 0; i < error.size(); i++)
+    {
+        temp = temp && (fabs(error[i]) < _allowed_error[i]);
+        
+    }
+    return temp;
 }
 
 JointPositions BaxterLimb::get_position(PRYPose x)
