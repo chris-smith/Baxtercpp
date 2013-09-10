@@ -9,6 +9,7 @@
 #include <baxter_msgs/GripperIdentity.h>
 #include <baxter_msgs/GripperProperties.h>
 #include <baxter_msgs/GripperState.h>
+#include <sensor_msgs/Range.h>
 
 #ifndef BAXTER_GRIPPER
 #define BAXTER_GRIPPER
@@ -30,6 +31,8 @@ public:
     baxter_msgs::GripperIdentity identity;
     baxter_msgs::GripperProperties properties;
     baxter_msgs::GripperState state;
+    float range;                                // ir_range value from message
+    sensor_msgs::Range range_msg;               // ir_range message
     
     std::string name;
     
@@ -46,10 +49,12 @@ private:
     ros::Subscriber _sub_identity;
     ros::Subscriber _sub_properties;
     ros::Subscriber _sub_state;
+    ros::Subscriber _sub_ir_range;
     
     void _on_gripper_identity(const baxter_msgs::GripperIdentity::ConstPtr&);
     void _on_gripper_properties(const baxter_msgs::GripperProperties::ConstPtr&);
     void _on_gripper_state(const baxter_msgs::GripperState::ConstPtr&);
+    void _on_ir_range(const sensor_msgs::Range::ConstPtr&);
 };
 
 BaxterGripper::BaxterGripper()
@@ -84,6 +89,8 @@ void BaxterGripper::_init()
     _sub_identity = _nh.subscribe(topic+"identity",_bufferSize,&BaxterGripper::_on_gripper_identity, this); 
     _sub_properties = _nh.subscribe(topic+"properties",_bufferSize,&BaxterGripper::_on_gripper_properties, this);
     _sub_state = _nh.subscribe(topic+"state",_bufferSize,&BaxterGripper::_on_gripper_state, this);
+    _sub_ir_range = _nh.subscribe("/robot/range/"+name+"_hand_range",_bufferSize,&BaxterGripper::_on_ir_range, this);
+    
 }
 
 void BaxterGripper::_on_gripper_identity(const baxter_msgs::GripperIdentity::ConstPtr& msg)
@@ -99,6 +106,12 @@ void BaxterGripper::_on_gripper_properties(const baxter_msgs::GripperProperties:
 void BaxterGripper::_on_gripper_state(const baxter_msgs::GripperState::ConstPtr& msg)
 {
     state = *msg;
+}
+
+void BaxterGripper::_on_ir_range(const sensor_msgs::Range::ConstPtr& msg)
+{
+    range_msg = *msg;
+    range = range_msg.range;
 }
 
 void BaxterGripper::calibrate()
