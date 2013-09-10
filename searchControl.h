@@ -2,6 +2,17 @@
 #include "rosCamWrap.h"
 #include "baxterLimb.h"
 
+/*------------------------------------------
+ * Positive x direction --> Away from front plate
+ * Positive y direction --> Towards Baxter's left side
+ * Positive z direction --> Vertical up 
+ * 
+ * Postive Pitch --> Right hand rule x-axis
+ * Positive Roll --> Right hand rule y-axis
+ * Positive Yaw --> Right hand rule z-axis
+ * 
+ * -----------------------------------------*/
+
 #ifndef SEARCH_CONTROL
 #define SEARCH_CONTROL
 
@@ -121,9 +132,10 @@ void SearchControl::_init_search()
     PRYPose pos;
     pos.point.x = -.1;
     pos.point.y = -1;
-    pos.point.z = .2;
+    pos.point.z = geometry.table_height + geometry.height_offset;
+    std::cout<<"height: "<<pos.point.z;
     pos.pry.roll = -3.14;
-    pos.pry.pitch = -.1;
+    pos.pry.pitch = 0;
     pos.pry.yaw = 1.57;/*
     std::cout<<"roll: " << pos.pry.roll <<"\npitch: "<<pos.pry.pitch<<"\nyaw: "<<pos.pry.yaw<<"\n";
     Pose pos2;
@@ -134,7 +146,7 @@ void SearchControl::_init_search()
     pos.pry = toPRY(pos2.quaternion);
     std::cout<<"roll: " << pos.pry.roll <<"\npitch: "<<pos.pry.pitch<<"\nyaw: "<<pos.pry.yaw<<"\n";
     */ros::Duration timeout(10);
-    _cam_hand->set_position(pos, true, timeout);
+    _cam_hand->set_position_quick(pos, timeout);
 }
 
 void SearchControl::_search()
@@ -153,13 +165,13 @@ void SearchControl::_move_to_piece()
     height = _search_cam->height();
     width = _search_cam->width();
     err.z = 0;
-    err.x = _obj_loc.x - width/2; // + camera_offset.x
-    err.y = _obj_loc.y - height/2; // + camera_offset.y
+    err.x = _obj_loc.x - width/2; 
+    err.y = _obj_loc.y - height/2; 
     
     //transform between pixels and real distances. figure this out as
     //function of distance
-    err.y /= -1000;
-    err.x /= -1000;
+    err.y /= -500; // + camera_offset.x
+    err.x /= -500; // + camera_offset.y
     
     std::cout<<"y position: " << _obj_loc.x;
     std::cout<<"  y error: " << err.y << "\n";
