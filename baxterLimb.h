@@ -99,7 +99,9 @@ public:
     void set_max_acceleration(double);                  //set blanket maximum acceleration allowed for each joint
     
     JointPositions get_position(PRYPose);               //returns joint angles to reach PRYPose
-    void set_position(PRYPose, bool, ros::Duration);    //moves endpoint to the specified position fast or slow
+    void set_position_quick(PRYPose, ros::Duration);    //moves endpoint to the specified position quickly
+    void set_position_accurate(PRYPose, ros::Duration); //moves endpoint to the specified position accurately
+    void set_position(PRYPose, ros::Duration);          //moves endpoint to the specified position using position controller
     
     /*    Controllers
      *      
@@ -113,6 +115,10 @@ public:
      *  uses 0.5(_pid)
      *****************************************************/
     int accurate_to_position(JointPositions, ros::Duration);
+    /* Moves to position until with error or timeout
+     *  using position controller
+     * ***************************************************/
+    int to_position(JointPositions, ros::Duration);
     
     int endpoint_control(Point); //add point to current endpoint state, sets velocities, exits
     
@@ -205,7 +211,8 @@ void BaxterLimb::Init()
     _pub_joint_mode = _nh.advertise<baxter_msgs::JointCommandMode>(topic+"/joint_command_mode", 10);
     _pub_joint_position = _nh.advertise<baxter_msgs::JointPositions>(topic+"/command_joint_angles",10);
     _pub_joint_velocity = _nh.advertise<baxter_msgs::JointVelocities>(topic+"/command_joint_velocities",10);
-
+    
+    
     gripper = new BaxterGripper(_name);
 }
 
@@ -469,18 +476,31 @@ JointPositions BaxterLimb::get_position(PRYPose x)
     return positions;
 }
 
-void BaxterLimb::set_position(PRYPose mypose, bool quick, ros::Duration timeout)
+void BaxterLimb::set_position_quick(PRYPose mypose, ros::Duration timeout)
+{
+    JointPositions positions = get_position(mypose);
+    if(positions.angles.empty())
+        return; 
+    
+    quickly_to_position(positions, timeout);
+}
+
+void BaxterLimb::set_position_accurate(PRYPose mypose, ros::Duration timeout)
 {
     JointPositions positions = get_position(mypose);
     if(positions.angles.empty())
         return;
-    if (quick)
-    {    
-        quickly_to_position(positions, timeout);
-        //accurate_to_position(positions, timeout); 
-    }
-    else
-        accurate_to_position(positions, timeout);
+    
+    accurate_to_position(positions, timeout);
+}
+
+void BaxterLimb::set_position(PRYPose mypose, ros::Duration timeout)
+{
+    JointPositions positions = get_position(mypose);
+    if(positions.angles.empty())
+        return;
+    
+    to_position(positions, timeout);
 }
 
 void BaxterLimb::_limit_velocity(std::vector<double> &vel)
@@ -693,6 +713,42 @@ int BaxterLimb::accurate_to_position(JointPositions desired, ros::Duration timeo
     return -1;
 }
 
+int BaxterLimb::to_position(JointPositions desired, ros::Duration timeout)
+{
+    //std::cout<<"accurate"<<"\n";
+    double hz = 100;
+    bool speed = FAST;
+    ros::Time start  = ros::Time::now();
+    ros::Time last = ros::Time::now();
+    ros::Rate r(hz); 
+    ros::Duration dt;
+    std::vector<double> position = desired.angles;
+    std::vector<double> current = joint_angles();
+    std::vector<double> error = v_difference(current, position);
+    std::vector<double> previous_error(position.size(),0);
+    std::vector<double> integral(position.size(),0);
+    std::vector<double> derivative(position.size(),0);
+    std::vector<double> last_vel = joint_velocities();
+    std::vector<double> accel(position.size(),0);
+    
+    JointVelocities output;
+    output.names = desired.names;
+    
+    while( !_in_range(error,speed) && ( ros::Time::now() - start < timeout ))
+    {
+        set_joint_positions(desired);   
+        ros::spinOnce();
+        r.sleep();
+    }
+    //std::cout << "\nOperating time: ";
+    //std::cout << ros::Time::now() - start << std::endl;
+    if(_in_range(error, speed))
+        return 1;
+    
+    ROS_ERROR("Timeout: moving to position. Max error at [ %s ]", _max_error(error));
+    return -1;
+}
+
 int BaxterLimb::endpoint_control(Point point_err)
 {
     double hz = 100;
@@ -727,7 +783,7 @@ int BaxterLimb::endpoint_control(Point point_err)
         error = v_difference(position, joint_angles());
         //integral = v_sum(integral, product(error, toSec(dt.nsec)));
         //_saturate(integral, 1);
-        v_print(error, "error");
+        //v_print(error, "error");
         derivative = quotient(v_difference(error, previous_error), toSec(dt.nsec));
         output.velocities = compute_gains(error, integral, derivative, SLOW);
         _limit_acceleration(output.velocities, last_vel, toSec(dt.nsec));
