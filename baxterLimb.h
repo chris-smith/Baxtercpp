@@ -29,6 +29,24 @@ struct Wrench{ Point force; Point torque; };
 struct PRY{ double pitch; double roll; double yaw; };
 struct PRYPose{ Point point; PRY pry; };
 
+// Define operators for structs
+Point operator+(const Point &a, const Point &b)
+{
+    Point ret;
+    ret.x = a.x+b.x;
+    ret.y = a.y+b.y;
+    ret.z = a.z+b.z;
+    return ret;
+}
+Point operator-(const Point &a, const Point &b)
+{
+    Point ret;
+    ret.x = a.x-b.x;
+    ret.y = a.y-b.y;
+    ret.z = a.z-b.z;
+    return ret;
+}
+
 #endif
 
 /*------------------------------------------
@@ -719,24 +737,15 @@ int BaxterLimb::to_position(JointPositions desired, ros::Duration timeout)
     double hz = 100;
     bool speed = FAST;
     ros::Time start  = ros::Time::now();
-    ros::Time last = ros::Time::now();
     ros::Rate r(hz); 
-    ros::Duration dt;
     std::vector<double> position = desired.angles;
     std::vector<double> current = joint_angles();
     std::vector<double> error = v_difference(current, position);
-    std::vector<double> previous_error(position.size(),0);
-    std::vector<double> integral(position.size(),0);
-    std::vector<double> derivative(position.size(),0);
-    std::vector<double> last_vel = joint_velocities();
-    std::vector<double> accel(position.size(),0);
-    
-    JointVelocities output;
-    output.names = desired.names;
     
     while( !_in_range(error,speed) && ( ros::Time::now() - start < timeout ))
     {
         set_joint_positions(desired);   
+        error = v_difference(joint_angles(), desired.angles);
         ros::spinOnce();
         r.sleep();
     }
@@ -751,50 +760,47 @@ int BaxterLimb::to_position(JointPositions desired, ros::Duration timeout)
 
 int BaxterLimb::endpoint_control(Point point_err)
 {
-    double hz = 100;
-    _cartesian_pose.point.x += point_err.x;
-    _cartesian_pose.point.y += point_err.y;
-    _cartesian_pose.point.z += point_err.z;
+    //double hz = 100;
+    std::cout<<"endpoint control";
+    Point new_point = _cartesian_pose.point - point_err;
+//     _cartesian_pose.point.x + point_err.x;
+//     _cartesian_pose.point.y + point_err.y;
+//     _cartesian_pose.point.z + point_err.z;
     PRYPose pos;
-    pos.point = _cartesian_pose.point;
+    pos.point = new_point;
     pos.pry = toPRY(_cartesian_pose.quaternion);
     JointPositions desired = get_position(pos);
     if(desired.angles.empty())
-        return 1;
-    ros::Time start  = ros::Time::now();
-    ros::Time last = ros::Time::now();
-    ros::Rate r(hz); 
-    ros::Duration dt;
+        return 0;
+    set_joint_positions(desired);
+    return 1;
+    /*
     std::vector<double> position = desired.angles;
-    std::vector<double> current = joint_angles();
-    std::vector<double> error = v_difference(current, position);
-    std::vector<double> previous_error(position.size(),0);
     std::vector<double> integral(position.size(),0);
     std::vector<double> derivative(position.size(),0);
-    std::vector<double> last_vel = joint_velocities();
-    std::vector<double> accel(position.size(),0);
-    
+    std::vector<double> error(position.size(),0);
     JointVelocities output;
     output.names = desired.names;
     
-        dt = ros::Time::now() - last;
+        /*dt = ros::Time::now() - last;
         dt.nsec = (toSec(dt.nsec) < 1/hz ? toNsec(1/hz) : dt.nsec);
         last = ros::Time::now();
         error = v_difference(position, joint_angles());
         //integral = v_sum(integral, product(error, toSec(dt.nsec)));
         //_saturate(integral, 1);
         //v_print(error, "error");
-        derivative = quotient(v_difference(error, previous_error), toSec(dt.nsec));
-        output.velocities = compute_gains(error, integral, derivative, SLOW);
-        _limit_acceleration(output.velocities, last_vel, toSec(dt.nsec));
+        //derivative = quotient(v_difference(error, previous_error), toSec(dt.nsec));
+        output.velocities = compute_gains(error, integral, derivative, FAST);
+        //_limit_acceleration(output.velocities, last_vel, toSec(dt.nsec));
+        _limit_velocity(output.velocities);
         set_joint_velocities(output);
-        last_vel = output.velocities;
-        previous_error = error;        
+//         last_vel = output.velocities;
+//         previous_error = error;        
             
     //if(_in_range(error, FAST))
 //        return 1;
     
-    return -1;
+    return 1;*/
 }
 
 
