@@ -14,6 +14,9 @@ struct pt_line {cv::Point2d pt1; cv::Point2d pt2;};
 #ifndef GEOMETRY_TYPES
 #define GEOMETRY_TYPES
 
+// SHOULD PUT ALL GEOMETRY TYPES AND OPERATORS INTO
+// THEIR OWN HEADER FILE
+
 struct Point{ double x; double y; double z; };
 struct Quaternion{ double x; double y; double z; double w; };
 struct Pose{ Point point; Quaternion quaternion; };
@@ -21,6 +24,32 @@ struct Twist{ Point linear; Point angular; };
 struct Wrench{ Point force; Point torque; };
 struct PRY{ double pitch; double roll; double yaw; };
 struct PRYPose{ Point point; PRY pry; };
+
+// Define operators for structs
+Point operator+(const Point &a, const Point &b)
+{
+    Point ret;
+    ret.x = a.x+b.x;
+    ret.y = a.y+b.y;
+    ret.z = a.z+b.z;
+    return ret;
+}
+Point operator-(const Point &a, const Point &b)
+{
+    Point ret;
+    ret.x = a.x-b.x;
+    ret.y = a.y-b.y;
+    ret.z = a.z-b.z;
+    return ret;
+}
+bool operator<(const Point &a, const Point &b)
+{
+    bool ret = true;
+    ret = ret && (a.x < b.x);
+    ret = ret && (a.y < b.y);
+    ret = ret && (a.z < b.z);
+    return ret;
+}
 
 #endif
 
@@ -42,6 +71,7 @@ public:
     PRYPose reset_button;  //  location of button to remove any pieces still in view and place new pieces 
     BoundingBox deposit_border; //  location to place found objects
     std::vector<BoundingBox> deposit_containers;  //  containers in deposit_border
+    PRYPose home;               // home locationd
     
     //Search area parameters
     double borderMin(char); //get minimum dimension of _border in 'x' or 'y'
@@ -96,7 +126,9 @@ void SearchGeometry::Init(){
     _yPixelScale = 100;
     _xBuffer = 10;
     _yBuffer = 10;
-    _rng = new cv::RNG(0xFFFFFFFF);    
+    _rng = new cv::RNG(0xFFFFFFFF);   
+    table_height = 0;
+    height_offset = 0;
 }
 
 
