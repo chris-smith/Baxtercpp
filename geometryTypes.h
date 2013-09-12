@@ -1,3 +1,4 @@
+#include "opencv2/features2d/features2d.hpp"
 #ifndef GEOMETRY_TYPES
 #define GEOMETRY_TYPES
 
@@ -96,7 +97,7 @@ bool operator>(const Point &a, const Point &b)
     ret = ret && (a.z > b.z);
     return ret;
 }
-bool operator=(const Point &a, const Point &b)
+bool operator==(const Point &a, const Point &b)
 {
     bool ret = true;
     ret = ret && (a.x == b.x);
@@ -113,7 +114,7 @@ Quaternion operator+(const Quaternion &a, const Quaternion &b)
     ret.y = a.y + b.y;
     ret.z = a.z + b.z;
     ret.w = a.w + b.w;
-    return ret
+    return ret;
 }
 Quaternion operator-(const Quaternion &a, const Quaternion &b)
 {
@@ -124,7 +125,7 @@ Quaternion operator-(const Quaternion &a, const Quaternion &b)
     ret.w = a.w - b.w;
     return ret;
 }
-bool operator=(const Quaternion &a, const Quaternion &b)
+bool operator==(const Quaternion &a, const Quaternion &b)
 {
     bool ret = true;
     ret = ret && (a.x == b.x);
@@ -150,7 +151,7 @@ Pose operator-(const Pose &a, const Pose &b)
     ret.quaternion = a.quaternion - b.quaternion;
     return ret;    
 }
-Bool operator=(const Pose &a, const Pose &b)
+bool operator==(const Pose &a, const Pose &b)
 {
     bool ret = true;
     ret = ret && (a.point == b.point);
@@ -173,7 +174,7 @@ Twist operator-(const Twist &a, const Twist &b)
     ret.angular = a.angular - b.angular;
     return ret;
 }
-bool operator=(const Twist &a, const Twist &b)
+bool operator==(const Twist &a, const Twist &b)
 {
     bool ret = true;
     ret = ret && (a.linear == b.linear);
@@ -195,7 +196,7 @@ Wrench operator-(const Wrench &a, const Wrench &b)
     ret.torque = a.torque - b.torque;
     return ret;
 }
-bool operator=(const Wrench &a, const Wrench &b)
+bool operator==(const Wrench &a, const Wrench &b)
 {
     bool ret = true;
     ret = ret && (a.force == b.force);
@@ -213,13 +214,13 @@ PRY operator+(const PRY &a, const PRY &b)
 }
 PRY operator-(const PRY &a, const PRY &b)
 {
-    Wrench ret;
+    PRY ret;
     ret.pitch = a.pitch - b.pitch;
     ret.roll = a.roll - b.roll;
     ret.yaw = a.yaw - b.yaw;
     return ret;
 }
-bool operator=(const PRY &a, const PRY &b)
+bool operator==(const PRY &a, const PRY &b)
 {
     bool ret = true;
     ret = ret && (a.pitch == b.pitch);
@@ -231,24 +232,39 @@ bool operator=(const PRY &a, const PRY &b)
 PRYPose operator+(const PRYPose &a, const PRYPose &b)
 {
     PRYPose ret;
-    ret.force = a.point + b.point;
-    ret.torque = a.pry + b.pry;
+    ret.point = a.point + b.point;
+    ret.pry = a.pry + b.pry;
     return ret;
 }
 PRYPose operator-(const PRYPose &a, const PRYPose &b)
 {
     PRYPose ret;
-    ret.force = a.point - b.point;
-    ret.torque = a.pry - b.pry;
+    ret.point = a.point - b.point;
+    ret.pry = a.pry - b.pry;
     return ret;
 }
-bool operator=(const PRYPose &a, const PRYPose &b)
+bool operator==(const PRYPose &a, const PRYPose &b)
 {
     bool ret = true;
     ret = ret && (a.point == b.point);
     ret = ret && (a.pry == b.pry);
 }
 
+
+/* *  Custom Overloads of OpenCV Operators  *
+ * ******************************************/
+
+cv::Rect operator*(const cv::Rect &a, double b)
+{
+    double height = a.height;
+    double width = a.width;
+    cv::Point center(a.x+width/2, a.y+height/2);
+    height *= b;
+    width *= b;
+    cv::Point origin(center.x - width/2, center.y - height/2);
+    cv::Rect ret(origin, cv::Size(width,height));
+    return ret;
+}
 
 
 #endif
