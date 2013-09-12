@@ -13,41 +13,12 @@
 
 //each limb has a gripper
 #include "baxterGripper.h"
+#include "geometryTypes.h"
 
 #define numJoints 7
 #define FAST true
 #define SLOW false
 
-#ifndef GEOMETRY_TYPES
-#define GEOMETRY_TYPES
-
-struct Point{ double x; double y; double z; };
-struct Quaternion{ double x; double y; double z; double w; };
-struct Pose{ Point point; Quaternion quaternion; };
-struct Twist{ Point linear; Point angular; };
-struct Wrench{ Point force; Point torque; };
-struct PRY{ double pitch; double roll; double yaw; };
-struct PRYPose{ Point point; PRY pry; };
-
-// Define operators for structs
-Point operator+(const Point &a, const Point &b)
-{
-    Point ret;
-    ret.x = a.x+b.x;
-    ret.y = a.y+b.y;
-    ret.z = a.z+b.z;
-    return ret;
-}
-Point operator-(const Point &a, const Point &b)
-{
-    Point ret;
-    ret.x = a.x-b.x;
-    ret.y = a.y-b.y;
-    ret.z = a.z-b.z;
-    return ret;
-}
-
-#endif
 
 /*------------------------------------------
  * Positive x direction --> Away from front plate

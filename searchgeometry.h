@@ -6,52 +6,11 @@
 #include "opencv2/nonfree/nonfree.hpp"
 #include <boost/algorithm/string.hpp>
 #include <typeinfo>
+#include "geometryTypes.h"
 
 struct BoundingBox {cv::Point2d corners[4];};
 struct BoundingBox_Size {cv::Point2d origin; double height; double width;};
 struct pt_line {cv::Point2d pt1; cv::Point2d pt2;};
-
-#ifndef GEOMETRY_TYPES
-#define GEOMETRY_TYPES
-
-// SHOULD PUT ALL GEOMETRY TYPES AND OPERATORS INTO
-// THEIR OWN HEADER FILE
-
-struct Point{ double x; double y; double z; };
-struct Quaternion{ double x; double y; double z; double w; };
-struct Pose{ Point point; Quaternion quaternion; };
-struct Twist{ Point linear; Point angular; };
-struct Wrench{ Point force; Point torque; };
-struct PRY{ double pitch; double roll; double yaw; };
-struct PRYPose{ Point point; PRY pry; };
-
-// Define operators for structs
-Point operator+(const Point &a, const Point &b)
-{
-    Point ret;
-    ret.x = a.x+b.x;
-    ret.y = a.y+b.y;
-    ret.z = a.z+b.z;
-    return ret;
-}
-Point operator-(const Point &a, const Point &b)
-{
-    Point ret;
-    ret.x = a.x-b.x;
-    ret.y = a.y-b.y;
-    ret.z = a.z-b.z;
-    return ret;
-}
-bool operator<(const Point &a, const Point &b)
-{
-    bool ret = true;
-    ret = ret && (a.x < b.x);
-    ret = ret && (a.y < b.y);
-    ret = ret && (a.z < b.z);
-    return ret;
-}
-
-#endif
 
 #ifndef SEARCHGEOMETRY_H
 #define SEARCHGEOMETRY_H
