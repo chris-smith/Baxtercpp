@@ -70,6 +70,10 @@ private:
     void _set_roi(double);                               //  set _roi based on _obj_loc and area of obj
     cv::Point _get_centroid(std::vector< cv::Point >);   //  returns centroid of a set of points, calculated as mean of points
     void _transform(Point &, double);                    //  transforms dimensionless error to real distance. accounts for hand rotation
+    cv::Rect _get_bounds(std::vector<cv::Point>);         //  returns a bounding rectangle for the contour
+    std::vector<cv::Point> _corners(cv::Rect);
+    std::vector<cv::Point> _increase_bounds(std::vector<cv::Point>, cv::Point);
+    
     
     //Search variables
     cv::Point2d _obj_loc;                                //  location of found object in _object()
@@ -202,15 +206,16 @@ void SearchControl::_move_to_piece()
     std::cout<<"x position: " << _obj_loc.x;
     std::cout<<"  x error: " << err.x << "\n";*/
     
-    _cam_hand->endpoint_control(err);
-    if(_object())
-        _move_to_piece();
-    else
-    {
-        _state = 0; //reset if object has been lost
-        _reset_roi();
-        _reset_loc();
-    }
+    _state = 0;
+    //_cam_hand->endpoint_control(err);
+//     if(_object())
+//         _move_to_piece();
+//     else
+//     {
+//         _state = 0; //reset if object has been lost
+//         _reset_roi();
+//         _reset_loc();
+//     }
 }
 
 void SearchControl::_verify_piece()
@@ -233,7 +238,7 @@ bool SearchControl::_object()
 {
     _reset_loc();
     cv::Mat scene = _search_cam->cvImage();
-    cv::Mat thresh, canny;
+    cv::Mat thresh;
     
     cv::cvtColor(scene, thresh, CV_BGR2GRAY);
     cv::threshold(thresh, thresh,127,255,cv::THRESH_BINARY_INV); 
@@ -264,12 +269,16 @@ bool SearchControl::_object()
     }
     if (largest_area < min_area)
     {
-        imshow("Found Object?", thresh);
+        cv::imshow("Found Object?", thresh);
         return false;
     }
     
     _obj_loc = _get_centroid(contours[largest_contour_index]);
     circle(thresh, _obj_loc, 10, cv::Scalar(255,0,0), 1, 8);
+    bounding_rect = _get_bounds(contours[largest_contour_index]);
+    bounding_rect = bounding_rect*.5;
+    rectangle(scene, bounding_rect, cv::Scalar(255,0,0), 1, 8);
+    cv::imshow("bounding box", scene);
     //_set_roi(largest_area); 
     //bounding_rect = cv::boundingRect(contours[largest_contour_index]);
     //rectangle(thresh, bounding_rect, cv::Scalar(255,0,0),1,8,0);
@@ -290,6 +299,62 @@ cv::Point SearchControl::_get_centroid(std::vector< cv::Point > points)
     centroid.x /= points.size();
     centroid.y /= points.size();
     return centroid;
+}
+
+cv::Rect SearchControl::_get_bounds(std::vector<cv::Point> contour)
+{
+    double height = _search_cam->height();
+    double width = _search_cam->width();
+    std::vector<cv::Point> bounds(2,cv::Point(0,0));
+    bounds[0].x = width;  // xmin
+    bounds[0].y = height; // ymin
+    bounds[1].x = 0;      // xmax
+    bounds[1].y = 0;      // ymax
+    cv::Point current_point;
+    //std::cout<<"num points: "<<contour.size()<<std::endl;
+    for(int i = 0; i < contour.size(); i++)
+    {
+        current_point = contour[i];
+//         std::cout<<"origin: "<<bounds.x<<" "<<bounds.y<<std::endl;
+//         std::cout<<"size: "<<bounds.width<<" "<<bounds.height<<std::endl;
+        bounds = _increase_bounds(bounds, current_point);
+    }
+    return cv::Rect(bounds[0], bounds[1]);
+    
+}
+
+std::vector<cv::Point> SearchControl::_corners(cv::Rect rect)
+{
+    std::vector<cv::Point> corners(4, (cv::Point){0,0}); //4 corners, start at point 0,0
+    corners[0] = (cv::Point){rect.x, rect.y};
+    corners[1] = (cv::Point){rect.x + rect.width, rect.y};
+    corners[2] = (cv::Point){rect.x + rect.width, rect.y + rect.height};
+    corners[3] = (cv::Point){rect.x, rect.y + rect.height};
+    return corners;
+}
+
+std::vector<cv::Point> SearchControl::_increase_bounds(std::vector<cv::Point> rect, cv::Point new_point)
+{
+    //std::vector<cv::Point> corners = _corners(rect);
+    double ymin, ymax, xmin, xmax, x, y;
+//     std::cout<<"new point: "<<new_point.x <<" "<< new_point.y<<std::endl;
+//     std::cout<<"xmin: "<<xmin<<" xmax: "<<xmax<<" ymin: "<<ymin<<" ymax: "<<ymax<<std::endl;
+    x = new_point.x;
+    y = new_point.y;
+    if (x > rect[1].x)
+        rect[1].x = x;
+    else if(x < rect[0].x)
+        rect[0].x = x;
+    
+    if (y > rect[1].y)
+        rect[1].y = y;
+    else if(y < rect[0].y)
+        rect[0].y = y;
+    
+    
+    /*std::cout<<"new origin: "<<ret.x<<" "<<ret.y<<std::endl;
+    std::cout<<"new size: "<<ret.width<<" "<<ret.height<<std::endl;*/
+    return rect;
 }
 
 void SearchControl::_set_roi(double area)
