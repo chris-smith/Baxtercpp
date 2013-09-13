@@ -46,6 +46,7 @@ private:
     BaxterLimb* _cam_hand;
     BaxterLimb* _manip_hand;
     BaxterCamera* _search_cam;
+    cv::Mat whole_scene;
     
     //State trackers
     uchar _state;            //  {0: searching for piece, 1: found piece & moving over,
@@ -67,18 +68,20 @@ private:
     bool _roi_object();                                  //  looks for an object in subset of the image
     void _reset_loc();                                   //  sets _obj_loc to (-1,-1)
     void _reset_roi();                                   //  sets _roi to (-1,-1)
-    void _set_roi(double);                               //  set _roi based on _obj_loc and area of obj
+    void _set_roi(cv::Rect, double);                     //  set _roi based on _obj_loc and area of obj
     cv::Point _get_centroid(std::vector< cv::Point >);   //  returns centroid of a set of points, calculated as mean of points
     void _transform(Point &, double);                    //  transforms dimensionless error to real distance. accounts for hand rotation
-    cv::Rect _get_bounds(std::vector<cv::Point>);         //  returns a bounding rectangle for the contour
+    cv::Rect _get_bounds(std::vector<cv::Point>);        //  returns a bounding rectangle for the contour
     std::vector<cv::Point> _corners(cv::Rect);
     std::vector<cv::Point> _increase_bounds(std::vector<cv::Point>, cv::Point);
+    cv::Rect _restrict(std::vector<cv::Point>, double,double);     //  returns rectangle enclosed in size of image
     
     
     //Search variables
     cv::Point2d _obj_loc;                                //  location of found object in _object()
     cv::Rect _roi;                                       //   subset of image where object may be found
-    
+    double scene_height;
+    double scene_width;
 };
 
 SearchControl::SearchControl()
@@ -97,6 +100,8 @@ SearchControl::SearchControl(BaxterLimb* a, BaxterLimb* b, BaxterCamera* cam, PR
     _reset_loc();
     min_area = 100;
     geometry.home = home;
+    scene_height = _search_cam->height();
+    scene_width = _search_cam->width();
 }
 
 void SearchControl::search()
@@ -183,14 +188,11 @@ void SearchControl::_move_to_piece()
 {
     //  _state == 1
     Point err; //difference between centroid of object and center of image;
-    double height, width;
-    height = _search_cam->height();
-    width = _search_cam->width();
-    err.x = _obj_loc.x - width/2; 
-    err.y = _obj_loc.y - height/2;
+    err.x = _obj_loc.x - scene_width/2; 
+    err.y = _obj_loc.y - scene_height/2;
     // pixels -> pixels/pixel
-    err.y /= height;
-    err.x /= width; 
+    err.y /= scene_height;
+    err.x /= scene_width; 
     
     double yaw = toPRY(_cam_hand->endpoint_pose().quaternion).yaw;
     _transform(err, yaw);
@@ -208,8 +210,11 @@ void SearchControl::_move_to_piece()
     
     _state = 0;
     //_cam_hand->endpoint_control(err);
-//     if(_object())
+//     if(_roi_object())
+//     {
+//         ros::spinOnce();
 //         _move_to_piece();
+//     }
 //     else
 //     {
 //         _state = 0; //reset if object has been lost
@@ -238,6 +243,7 @@ bool SearchControl::_object()
 {
     _reset_loc();
     cv::Mat scene = _search_cam->cvImage();
+    whole_scene = scene;
     cv::Mat thresh;
     
     cv::cvtColor(scene, thresh, CV_BGR2GRAY);
@@ -248,8 +254,6 @@ bool SearchControl::_object()
     int largest_area = 0;
     int largest_contour_index = 0;
     cv::Rect bounding_rect;
-    bounding_rect.x = -1;
-    bounding_rect.y = -1;
     
     //cv::Canny(thresh, canny, 5, 250, 3);
     cv::imshow("Thresholded", thresh);
@@ -276,14 +280,84 @@ bool SearchControl::_object()
     _obj_loc = _get_centroid(contours[largest_contour_index]);
     circle(thresh, _obj_loc, 10, cv::Scalar(255,0,0), 1, 8);
     bounding_rect = _get_bounds(contours[largest_contour_index]);
-    bounding_rect = bounding_rect*.5;
+    _set_roi(bounding_rect, 2);
     rectangle(scene, bounding_rect, cv::Scalar(255,0,0), 1, 8);
-    cv::imshow("bounding box", scene);
+    cv::imshow("bounding box", whole_scene);
     //_set_roi(largest_area); 
     //bounding_rect = cv::boundingRect(contours[largest_contour_index]);
     //rectangle(thresh, bounding_rect, cv::Scalar(255,0,0),1,8,0);
     //std::cout<<"found "<<countours.size()<<" contours.\n";
     imshow("Found Object?", thresh);
+    cv::waitKey(10);
+    return true;
+}
+
+bool SearchControl::_roi_object()
+{
+    _reset_loc();
+    cv::Mat scene = _search_cam->cvImage();
+    whole_scene = scene;
+    try
+    {
+        scene = scene(_roi);
+    }
+    catch (cv::Exception)
+    {
+        ROS_ERROR("Your region of interest is poorly defined");
+        return false;
+    }
+    cv::Mat thresh;
+    
+    cv::cvtColor(scene, thresh, CV_BGR2GRAY);
+    cv::threshold(thresh, thresh,127,255,cv::THRESH_BINARY_INV); 
+    
+    std::vector< std::vector< cv::Point > > contours;
+    std::vector< cv::Vec4i > hierarchy;
+    int largest_area = 0;
+    int largest_contour_index = 0;
+    cv::Rect bounding_rect;
+    
+    //cv::Canny(thresh, canny, 5, 250, 3);
+    cv::imshow("roi thresholded", thresh);
+    cv::findContours(thresh, contours, CV_RETR_CCOMP, CV_CHAIN_APPROX_SIMPLE);
+
+    int iters = contours.size();
+    //std::cout<<"size: "<<iters<<"\n";
+    for(int i = 0; i < iters; i++)
+    {
+        double a = cv::contourArea(contours[i], false);
+        if ( a > largest_area)
+        {
+            largest_area = a;
+            largest_contour_index = i;
+            //bounding_rect = boundingRect(contours[i]);
+        }
+    }
+    if (largest_area < min_area)
+    {
+        cv::imshow("Found Object?", thresh);
+        return false;
+    }
+    
+    _obj_loc = _get_centroid(contours[largest_contour_index]);
+    _obj_loc.x += _roi.x;
+    _obj_loc.y += _roi.y;
+    circle(whole_scene, _obj_loc, 10, cv::Scalar(255,0,0), 1, 8);
+    bounding_rect = _get_bounds(contours[largest_contour_index]);
+    bounding_rect.x += _roi.x;
+    bounding_rect.y += _roi.y;
+    //move bounding rect to account for fact that contour
+    //was taken from subset of image
+    // THENNN do below
+    _set_roi(bounding_rect, 2);
+    
+    rectangle(whole_scene, bounding_rect, cv::Scalar(255,0,0), 1, 8);
+    cv::imshow("bounding box", whole_scene);
+    //_set_roi(largest_area); 
+    //bounding_rect = cv::boundingRect(contours[largest_contour_index]);
+    //rectangle(thresh, bounding_rect, cv::Scalar(255,0,0),1,8,0);
+    //std::cout<<"found "<<countours.size()<<" contours.\n";
+    imshow("ROI Found Object?", thresh);
     cv::waitKey(10);
     return true;
 }
@@ -303,11 +377,11 @@ cv::Point SearchControl::_get_centroid(std::vector< cv::Point > points)
 
 cv::Rect SearchControl::_get_bounds(std::vector<cv::Point> contour)
 {
-    double height = _search_cam->height();
-    double width = _search_cam->width();
+//     double height = _search_cam->height();
+//     double width = _search_cam->width();
     std::vector<cv::Point> bounds(2,cv::Point(0,0));
-    bounds[0].x = width;  // xmin
-    bounds[0].y = height; // ymin
+    bounds[0].x = scene_width;  // xmin
+    bounds[0].y = scene_height; // ymin
     bounds[1].x = 0;      // xmax
     bounds[1].y = 0;      // ymax
     cv::Point current_point;
@@ -320,7 +394,22 @@ cv::Rect SearchControl::_get_bounds(std::vector<cv::Point> contour)
         bounds = _increase_bounds(bounds, current_point);
     }
     return cv::Rect(bounds[0], bounds[1]);
+    //return _restrict(bounds, scene_height, scene_width);
+}
+
+cv::Rect SearchControl::_restrict(std::vector<cv::Point> bounds, double height, double width)
+{
+    if (bounds[0].x < 0)
+        bounds[0].x = 0;
+    else if(bounds[1].x > width)
+        bounds[1].x = width;
     
+    if (bounds[0].y < 0)
+        bounds[0].y = 0;
+    else if(bounds[1].y > height)
+        bounds[1].y = height;
+    
+    return cv::Rect(bounds[0], bounds[1]);
 }
 
 std::vector<cv::Point> SearchControl::_corners(cv::Rect rect)
@@ -357,13 +446,25 @@ std::vector<cv::Point> SearchControl::_increase_bounds(std::vector<cv::Point> re
     return rect;
 }
 
-void SearchControl::_set_roi(double area)
+void SearchControl::_set_roi(cv::Rect rect, double multiplier)
 {
-    double len = sqrt(area);
-    _roi.width = 2*len;
-    _roi.height = 2*len;
-    _roi.x = _obj_loc.x - len/2;
-    _roi.y = _obj_loc.y - len/2;
+    rect = rect * multiplier;
+    double xmin,xmax,ymin,ymax;
+    xmin = rect.x;
+    ymin = rect.y;
+    xmax = xmin + rect.width;
+    ymax = ymin + rect.height;
+    if (xmin < 0)
+        xmin = 0;
+    else if(xmax > scene_width)
+        xmax = scene_width;
+    
+    if (ymin < 0)
+        ymin = 0;
+    else if(ymax > scene_height)
+        ymax = scene_height;
+    
+    _roi = cv::Rect(cv::Point(xmin,ymin), cv::Point(xmax,ymax));
 }
 
 void SearchControl::_reset_loc()
@@ -374,10 +475,10 @@ void SearchControl::_reset_loc()
 
 void SearchControl::_reset_roi()
 {
-    _roi.x = -1;
-    _roi.y = -1;
-    _roi.width = 0;
-    _roi.height = 0;
+    _roi.x = 0;
+    _roi.y = 0;
+    _roi.width = scene_width;
+    _roi.height = scene_height;
 }
 
 void SearchControl::_transform(Point &err, double yaw)
