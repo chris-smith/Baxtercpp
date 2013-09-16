@@ -2,8 +2,7 @@
 #ifndef GEOMETRY_TYPES
 #define GEOMETRY_TYPES
 
-// SHOULD PUT ALL GEOMETRY TYPES AND OPERATORS INTO
-// THEIR OWN HEADER FILE
+/*    Here are the types defined here
 
 struct Point{ double x; double y; double z; };
 struct Quaternion{ double x; double y; double z; double w; };
@@ -17,38 +16,61 @@ struct PRYPose{ Point point; PRY pry; };
 *********************************/
 
 //  Point Operators  ------------------------------
-Point operator+(const Point &a, const Point &b)
+
+struct Point
 {
-    Point ret;
-    ret.x = a.x + b.x;
-    ret.y = a.y + b.y;
-    ret.z = a.z + b.z;
-    return ret;
-}
-Point operator-(const Point &a, const Point &b)
-{
-    Point ret;
-    ret.x = a.x - b.x;
-    ret.y = a.y - b.y;
-    ret.z = a.z - b.z;
-    return ret;
-}
-Point operator*(const Point &a, const Point &b)
-{
-    Point ret;
-    ret.x = a.x * b.x;
-    ret.y = a.y * b.y;
-    ret.z = a.z * b.z;
-    return ret;
-}
-Point operator/(const Point &a, const Point &b)
-{
-    Point ret;
-    ret.x = a.x / b.x;
-    ret.y = a.y / b.y;
-    ret.z = a.z / b.z;
-    return ret;
-}
+    double x, y, z;
+    Point& operator+=(const Point &a)
+    {
+        this->x = this->x + a.x;
+        this->y = this->y + a.y;
+        this->z = this->z + a.z;
+        return *this;
+    }
+    Point& operator-=(const Point &a)
+    {
+        this->x = this->x - a.x;
+        this->y = this->y - a.y;
+        this->z = this->z - a.z;
+        return *this;
+    }
+    Point& operator*=(const Point &a)
+    {
+        this->x = this->x * a.x;
+        this->y = this->y * a.y;
+        this->z = this->z * a.z;
+        return *this;
+    }
+    Point& operator/=(const Point &a)
+    {
+        this->x = this->x / a.x;
+        this->y = this->y / a.y;
+        this->z = this->z / a.z;
+        return *this;
+    }
+    const Point operator+(const Point& a) const
+    {
+        return Point(*this) += a;
+    }
+    const Point operator-(const Point& a) const
+    {
+        Point out = *this;
+        out -= a;
+        return out;
+    }
+    const Point operator*(const Point& a) const
+    {
+        Point out = *this;
+        out *= a;
+        return out;
+    }
+    const Point operator/(const Point& a) const
+    {
+        Point out = *this;
+        out /= a;
+        return out;
+    }
+};
 Point operator+(const Point &a, double &b)
 {
     Point ret;
@@ -105,6 +127,13 @@ bool operator==(const Point &a, const Point &b)
     ret = ret && (a.z == b.z);
     return ret;
 }
+
+struct Quaternion{ double x; double y; double z; double w; };
+struct Pose{ Point point; Quaternion quaternion; };
+struct Twist{ Point linear; Point angular; };
+struct Wrench{ Point force; Point torque; };
+struct PRY{ double pitch; double roll; double yaw; };
+struct PRYPose{ Point point; PRY pry; };
 
 //  Quaternion Operators  ------------------------------
 Quaternion operator+(const Quaternion &a, const Quaternion &b)
@@ -263,6 +292,38 @@ cv::Rect operator*(const cv::Rect &a, double b)
     width *= b;
     cv::Point origin(center.x - width/2, center.y - height/2);
     cv::Rect ret(origin, cv::Size(width,height));
+    return ret;
+}
+
+cv::Point2d operator+(const cv::Point2d &a, double b)
+{
+    cv::Point ret;
+    ret.x = a.x + b;
+    ret.y = a.y + b;
+    return ret;
+}
+
+cv::Point2d operator-(const cv::Point2d &a, double b)
+{
+    cv::Point ret;
+    ret.x = a.x - b;
+    ret.y = a.y - b;
+    return ret;
+}
+
+cv::Point2d constrain(const cv::Point2d &a, const cv::Point2d &min, const cv::Point2d &max)
+{
+    cv::Point2d ret = a;
+    if (a.x > max.x)
+        ret.x = max.x;
+    else if (a.x < min.x)
+        ret.x = min.x;
+    
+    if (a.y > max.y)
+        ret.y = max.y;
+    else if (a.y < min.y)
+        ret.y = min.y;
+    
     return ret;
 }
 
