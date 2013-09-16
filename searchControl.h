@@ -16,6 +16,8 @@
 #define width_ratio 0.832       //width camera sees given a range [m/m]
 #define height_ratio 0.523      //height camera sees given a range [m/m]
 
+struct Predictor{ int dimension; double k;};   // 0 < k < 1
+
 #ifndef SEARCH_CONTROL
 #define SEARCH_CONTROL
 
@@ -33,6 +35,8 @@ public:
     
     double min_area;       // smallest area to be considered an object. default 100
     Point allowable_error;
+    
+    void set_predictor(Predictor);     //use to ensure 0 <= k <= 1
     
     //main functions
     void search();         //main loop that searches for pieces, adjusts _state as necessary
@@ -66,6 +70,7 @@ private:
     //Called by Search Functions
     bool _object();                                      //  looks for an object in _search_cam
     bool _roi_object();                                  //  looks for an object in subset of the image
+    bool _track_object();
     void _reset_loc();                                   //  sets _obj_loc to (-1,-1)
     void _reset_roi();                                   //  sets _roi to (-1,-1)
     void _set_roi(cv::Rect, double);                     //  set _roi based on _obj_loc and area of obj
@@ -75,10 +80,17 @@ private:
     std::vector<cv::Point> _corners(cv::Rect);
     std::vector<cv::Point> _increase_bounds(std::vector<cv::Point>, cv::Point);
     cv::Rect _restrict(std::vector<cv::Point>, double,double);     //  returns rectangle enclosed in size of image
-    
+    cv::Rect _getBlobRoi(cv::Point2d pt);
+    std::vector<cv::Point> _getBlob(cv::Mat);            //   return contour of largest blob in image
+    void _endpoint_control(Point);
     
     //Search variables
     cv::Point2d _obj_loc;                                //  location of found object in _object()
+    cv::Point2d _prev_loc;                               //   for use with kalman filter
+    cv::Point2d _predicted_loc;                          //   predicted location from Kalman filter
+    Predictor _predictor;
+    bool _tracking;                                      //   tracking object if true
+    bool _track_state;                                   //   initializes tracker
     cv::Rect _roi;                                       //   subset of image where object may be found
     double scene_height;
     double scene_width;
@@ -98,10 +110,15 @@ SearchControl::SearchControl(BaxterLimb* a, BaxterLimb* b, BaxterCamera* cam, PR
     _search_cam = cam;
     _state = 0;
     _reset_loc();
+    _reset_roi();
     min_area = 100;
     geometry.home = home;
     scene_height = _search_cam->height();
     scene_width = _search_cam->width();
+    _tracking = false;
+    _track_state = false;
+    _predictor.dimension = 20;
+    _predictor.k = 0.5;
 }
 
 void SearchControl::search()
@@ -121,6 +138,7 @@ void SearchControl::search()
         case 1:
             //  Found something, move over
             //  obj in bounds ? move over, _state = 2 : state = 0
+            _tracking = true;
             _move_to_piece();
             std::cout<<"1";
             break;
@@ -209,7 +227,7 @@ void SearchControl::_move_to_piece()
     std::cout<<"  x error: " << err.x << "\n";*/
     
     _state = 0;
-    //_cam_hand->endpoint_control(err);
+    _cam_hand->endpoint_control(err);
 //     if(_roi_object())
 //     {
 //         ros::spinOnce();
@@ -244,50 +262,13 @@ bool SearchControl::_object()
     _reset_loc();
     cv::Mat scene = _search_cam->cvImage();
     whole_scene = scene;
-    cv::Mat thresh;
-    
-    cv::cvtColor(scene, thresh, CV_BGR2GRAY);
-    cv::threshold(thresh, thresh,127,255,cv::THRESH_BINARY_INV); 
-    
-    std::vector< std::vector< cv::Point > > contours;
-    std::vector< cv::Vec4i > hierarchy;
-    int largest_area = 0;
-    int largest_contour_index = 0;
-    cv::Rect bounding_rect;
-    
-    //cv::Canny(thresh, canny, 5, 250, 3);
-    cv::imshow("Thresholded", thresh);
-    cv::findContours(thresh, contours, CV_RETR_CCOMP, CV_CHAIN_APPROX_SIMPLE);
-
-    int iters = contours.size();
-    //std::cout<<"size: "<<iters<<"\n";
-    for(int i = 0; i < iters; i++)
+    std::vector<cv::Point> blob = _getBlob(scene);
+    if (!blob.empty())
     {
-        double a = cv::contourArea(contours[i], false);
-        if ( a > largest_area)
-        {
-            largest_area = a;
-            largest_contour_index = i;
-            //bounding_rect = boundingRect(contours[i]);
-        }
+        _obj_loc = _get_centroid(blob);
+        circle(whole_scene, _obj_loc, 10, cv::Scalar(255,0,0), 1, 8);
+        cv::imshow("scene", whole_scene);
     }
-    if (largest_area < min_area)
-    {
-        cv::imshow("Found Object?", thresh);
-        return false;
-    }
-    
-    _obj_loc = _get_centroid(contours[largest_contour_index]);
-    circle(thresh, _obj_loc, 10, cv::Scalar(255,0,0), 1, 8);
-    bounding_rect = _get_bounds(contours[largest_contour_index]);
-    _set_roi(bounding_rect, 2);
-    rectangle(scene, bounding_rect, cv::Scalar(255,0,0), 1, 8);
-    cv::imshow("bounding box", whole_scene);
-    //_set_roi(largest_area); 
-    //bounding_rect = cv::boundingRect(contours[largest_contour_index]);
-    //rectangle(thresh, bounding_rect, cv::Scalar(255,0,0),1,8,0);
-    //std::cout<<"found "<<countours.size()<<" contours.\n";
-    imshow("Found Object?", thresh);
     cv::waitKey(10);
     return true;
 }
@@ -306,8 +287,30 @@ bool SearchControl::_roi_object()
         ROS_ERROR("Your region of interest is poorly defined");
         return false;
     }
+    cv::Rect bounding_rect;
+    std::vector<cv::Point> blob = _getBlob(scene);
+    if (!blob.empty())
+    {
+        _obj_loc = _get_centroid(blob);
+        _obj_loc.x += _roi.x;
+        _obj_loc.y += _roi.y;
+        circle(whole_scene, _obj_loc, 10, cv::Scalar(255,0,0), 1, 8);
+        bounding_rect = _get_bounds(blob);
+        bounding_rect.x += _roi.x;
+        bounding_rect.y += _roi.y;
+        _set_roi(bounding_rect, 2);
+        
+        rectangle(whole_scene, bounding_rect, cv::Scalar(255,0,0), 1, 8);
+        cv::imshow("bounding box", whole_scene);
+    }
+    cv::waitKey(10);
+    return true;
+}
+
+std::vector<cv::Point> SearchControl::_getBlob(cv::Mat scene)
+{
+    // finds outline of the largest non-white object
     cv::Mat thresh;
-    
     cv::cvtColor(scene, thresh, CV_BGR2GRAY);
     cv::threshold(thresh, thresh,127,255,cv::THRESH_BINARY_INV); 
     
@@ -315,14 +318,12 @@ bool SearchControl::_roi_object()
     std::vector< cv::Vec4i > hierarchy;
     int largest_area = 0;
     int largest_contour_index = 0;
-    cv::Rect bounding_rect;
     
     //cv::Canny(thresh, canny, 5, 250, 3);
-    cv::imshow("roi thresholded", thresh);
+    cv::imshow("thresholded", thresh);
     cv::findContours(thresh, contours, CV_RETR_CCOMP, CV_CHAIN_APPROX_SIMPLE);
 
     int iters = contours.size();
-    //std::cout<<"size: "<<iters<<"\n";
     for(int i = 0; i < iters; i++)
     {
         double a = cv::contourArea(contours[i], false);
@@ -330,36 +331,85 @@ bool SearchControl::_roi_object()
         {
             largest_area = a;
             largest_contour_index = i;
-            //bounding_rect = boundingRect(contours[i]);
         }
     }
+    cv::imshow("blob", thresh);
     if (largest_area < min_area)
     {
-        cv::imshow("Found Object?", thresh);
-        return false;
+        std::vector<cv::Point> x = contours[0];
+        x.clear();
+        return x;
     }
     
-    _obj_loc = _get_centroid(contours[largest_contour_index]);
-    _obj_loc.x += _roi.x;
-    _obj_loc.y += _roi.y;
-    circle(whole_scene, _obj_loc, 10, cv::Scalar(255,0,0), 1, 8);
-    bounding_rect = _get_bounds(contours[largest_contour_index]);
-    bounding_rect.x += _roi.x;
-    bounding_rect.y += _roi.y;
-    //move bounding rect to account for fact that contour
-    //was taken from subset of image
-    // THENNN do below
-    _set_roi(bounding_rect, 2);
+    return contours[largest_contour_index];
+}
+
+bool SearchControl::_track_object()
+{
+    // Kalman filter
+    cv::Point pt;
+    cv::Point dim(scene_height, scene_width);
+    cv::Point origin(0,0);
+    if (!_track_state)
+    {
+        _track_state = true;
+        pt = _obj_loc;
+    }
+    else
+    {
+        pt = _obj_loc - _prev_loc + _obj_loc - (_obj_loc - _predicted_loc ) \
+         * _predictor.k;
+    }
+    _predicted_loc = pt;
+    int d = _predictor.dimension;
+    dim = dim - cv::Point(d/2,d/2);
+    pt = constrain(pt, origin, dim);
+    cv::Rect roi = _getBlobRoi(pt);
     
-    rectangle(whole_scene, bounding_rect, cv::Scalar(255,0,0), 1, 8);
-    cv::imshow("bounding box", whole_scene);
-    //_set_roi(largest_area); 
-    //bounding_rect = cv::boundingRect(contours[largest_contour_index]);
-    //rectangle(thresh, bounding_rect, cv::Scalar(255,0,0),1,8,0);
-    //std::cout<<"found "<<countours.size()<<" contours.\n";
-    imshow("ROI Found Object?", thresh);
-    cv::waitKey(10);
-    return true;
+    cv::Mat scene = _search_cam->cvImage();
+    whole_scene = scene;
+    try
+    {
+        scene = scene(roi);
+    }
+    catch (cv::Exception)
+    {
+        ROS_ERROR("Your region of interest is poorly defined");
+        return false;
+    }
+    std::vector<cv::Point> blob = _getBlob(scene);
+    if (!blob.empty())
+    {
+        cv::Point2d centroid = _get_centroid(blob);
+        _obj_loc.x = roi.x + centroid.x;
+        _obj_loc.y = roi.y + centroid.y;
+        rectangle(whole_scene, roi, cv::Scalar(255,0,0), 1, 8);
+        cv::imshow("tracking", whole_scene);
+    }
+}
+
+void SearchControl::_endpoint_control(Point err)
+{
+    PRYPose pose = geometry.home;
+    pose.point = _cam_hand->endpoint_pose().point;
+    pose.point -= err;
+    JointPositions desired = _cam_hand->get_position(pose);
+    if(desired.angles.empty())
+        return;
+    _cam_hand->set_joint_positions(desired);
+}
+
+cv::Rect SearchControl::_getBlobRoi(cv::Point2d pt)
+{
+    int dim = _predictor.dimension;
+    cv::Point2d origin(0,0);
+    cv::Point2d size(scene_height, scene_width);
+    cv::Point2d x,y;
+    x = pt - dim;
+    y = pt + dim;
+    x = constrain(x, origin, size);
+    y = constrain(y, origin, size);
+    return cv::Rect(x,y);
 }
 
 cv::Point SearchControl::_get_centroid(std::vector< cv::Point > points)
@@ -446,6 +496,16 @@ std::vector<cv::Point> SearchControl::_increase_bounds(std::vector<cv::Point> re
     return rect;
 }
 
+void SearchControl::set_predictor(Predictor params)
+{
+    if (params.k > 1 || params.k < 0)
+    {
+        ROS_ERROR("Gain for Kalman predictor must be in range [0-1]");
+        return;
+    }
+    _predictor = params;
+}
+
 void SearchControl::_set_roi(cv::Rect rect, double multiplier)
 {
     rect = rect * multiplier;
@@ -471,6 +531,7 @@ void SearchControl::_reset_loc()
 {
     _obj_loc.x = -1;
     _obj_loc.y = -1;
+    _prev_loc = _obj_loc;
 }
 
 void SearchControl::_reset_roi()
