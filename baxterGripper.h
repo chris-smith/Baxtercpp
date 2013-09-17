@@ -14,6 +14,8 @@
 #ifndef BAXTER_GRIPPER
 #define BAXTER_GRIPPER
 
+enum gripperType {  NORMAL, WIDE, LONG, CUSTOM  };
+
 class BaxterGripper
 {
     //interface for gripper on Baxter Research Robot
@@ -34,6 +36,11 @@ public:
     float range;                                // ir_range value from message
     sensor_msgs::Range range_msg;               // ir_range message
     
+    float length();
+    
+    gripperType type;
+    float gripperLength;
+    bool block;                                 // if true, waits until gripper is finished moving before exit
     std::string name;
     
 private:
@@ -55,6 +62,8 @@ private:
     void _on_gripper_properties(const baxter_msgs::GripperProperties::ConstPtr&);
     void _on_gripper_state(const baxter_msgs::GripperState::ConstPtr&);
     void _on_ir_range(const sensor_msgs::Range::ConstPtr&);
+    
+    void _wait();                               //  waits until the gripper is no longer moving
 };
 
 BaxterGripper::BaxterGripper()
@@ -91,6 +100,9 @@ void BaxterGripper::_init()
     _sub_state = _nh.subscribe(topic+"state",_bufferSize,&BaxterGripper::_on_gripper_state, this);
     _sub_ir_range = _nh.subscribe("/robot/range/"+name+"_hand_range",_bufferSize,&BaxterGripper::_on_ir_range, this);
     
+    block = false;
+    gripperLength = 0;
+    type = CUSTOM;
 }
 
 void BaxterGripper::_on_gripper_identity(const baxter_msgs::GripperIdentity::ConstPtr& msg)
@@ -114,6 +126,38 @@ void BaxterGripper::_on_ir_range(const sensor_msgs::Range::ConstPtr& msg)
     range = range_msg.range;
 }
 
+void BaxterGripper::_wait()
+{
+    ros::Time start = ros::Time::now();
+    ros::Duration timeout(2.5);
+    while( state.moving && (ros::Time::now() - start < timeout) )
+    {
+        ros::spinOnce();
+    }
+}
+
+float BaxterGripper::length()
+{
+    switch(type)
+    {
+        case NORMAL:
+            gripperLength = 0.0508;
+            break;
+        case WIDE:
+            gripperLength = 0.0508;
+            break;
+        case LONG:
+            gripperLength = 0.1016;
+            break;
+        case CUSTOM:
+            break;
+        default:
+            gripperLength = 0;
+            break;
+    }
+    return gripperLength;
+}
+
 void BaxterGripper::calibrate()
 {
     std_msgs::Empty msg;
@@ -130,6 +174,8 @@ void BaxterGripper::reset()
 void BaxterGripper::command(baxter_msgs::GripperCommand msg)
 {
     _pub_command.publish(msg);
+    if(block)
+        _wait();
 }
 
 void BaxterGripper::go_to(float pos)
@@ -137,6 +183,8 @@ void BaxterGripper::go_to(float pos)
     std_msgs::Float32 msg;
     msg.data = pos;
     _pub_goto.publish(msg);
+    if(block)
+        _wait();
 }
 
 #endif
