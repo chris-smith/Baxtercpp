@@ -36,8 +36,8 @@ struct JointVelocities{ std::vector<std::string> names; std::vector<double> velo
 struct Gains{ double kp; double ki; double kd; };
 std::string joint_ids[numJoints] = {"_s0","_s1","_e0","_e1","_w0","_w1","_w2"};
 
-Quaternion toQuat(PRY);                             //convert pitch, roll, yaw to quaternion
-PRY toPRY(Quaternion);                              //convert quaternion to pitch, roll, yaw
+gv::Quaternion toQuat(gv::PRY);                             //convert pitch, roll, yaw to quaternion
+gv::PRY toPRY(gv::Quaternion);                              //convert quaternion to pitch, roll, yaw
 
 #ifndef VECTOR_MATH
 #define VECTOR_MATH
@@ -69,9 +69,9 @@ public:
     std::vector<double> joint_velocities();             //return _joint_velocity
     std::vector<double> joint_efforts();                //return _joint_effort
     std::vector<std::string> joint_names();             //return _joint_names
-    Pose endpoint_pose();                               //return endpoint pose
-    Twist endpoint_velocity();                          //return endpoint velocity
-    Wrench endpoint_effort();                           //return endpoint effort
+    gm::Pose endpoint_pose();                               //return endpoint pose
+    gm::Twist endpoint_velocity();                          //return endpoint velocity
+    gm::Wrench endpoint_effort();                           //return endpoint effort
     unsigned short state_rate();                        //return _state_rate
     
     void set_joint_position_mode();                     //set limb to use position controller
@@ -87,10 +87,10 @@ public:
     void set_max_acceleration(std::vector<double>);     //set maximum acceleration allowed for each joint
     void set_max_acceleration(double);                  //set blanket maximum acceleration allowed for each joint
     
-    JointPositions get_position(PRYPose);               //returns joint angles to reach PRYPose
-    void set_position_quick(PRYPose, ros::Duration);    //moves endpoint to the specified position quickly
-    void set_position_accurate(PRYPose, ros::Duration); //moves endpoint to the specified position accurately
-    void set_position(PRYPose, ros::Duration);          //moves endpoint to the specified position using position controller
+    JointPositions get_position(gv::PRYPose);               //returns joint angles to reach PRYPose
+    int set_position_quick(gv::PRYPose, ros::Duration);    //moves endpoint to the specified position quickly
+    int set_position_accurate(gv::PRYPose, ros::Duration); //moves endpoint to the specified position accurately
+    int set_position(gv::PRYPose, ros::Duration);          //moves endpoint to the specified position using position controller
     
     /*    Controllers
      *      
@@ -109,7 +109,7 @@ public:
      * ***************************************************/
     int to_position(JointPositions, ros::Duration);
     
-    int endpoint_control(Point); //add point to current endpoint state, sets velocities, exits
+    int endpoint_control(gm::Point); //add point to current endpoint state, sets velocities, exits
     
     //computes pid. If bool is true, does so for "quick". If false, for "accurate"
     //Receives arguments error, integral, derivative, FAST/SLOW
@@ -129,9 +129,9 @@ private:
     double _max_velocity[numJoints]; // strictly >= 0
     double _max_acceleration[numJoints]; // strictly >= 0
     Gains _pid[numJoints];
-    Pose _cartesian_pose;
-    Twist _cartesian_velocity;
-    Wrench _cartesian_effort;
+    gm::Pose _cartesian_pose;
+    gm::Twist _cartesian_velocity;
+    gm::Wrench _cartesian_effort;
     baxter_msgs::JointCommandMode _pub_mode;   
     
     
@@ -203,6 +203,7 @@ void BaxterLimb::Init()
     
     
     gripper = new BaxterGripper(_name);
+    gripper->calibrate();
 }
 
 void BaxterLimb::_set_names()
@@ -241,12 +242,9 @@ void BaxterLimb::_on_joint_states(const sensor_msgs::JointState::ConstPtr& msg)
 void BaxterLimb::_on_endpoint_states(const baxter_msgs::EndpointState::ConstPtr& msg)
 {
     _set = true;
-    _cartesian_pose.point = (Point){msg->pose.position.x, msg->pose.position.y,msg->pose.position.z};
-    _cartesian_pose.quaternion = (Quaternion){msg->pose.orientation.x, msg->pose.orientation.y, msg->pose.orientation.z, msg->pose.orientation.w};
-    _cartesian_velocity.linear = (Point){msg->twist.linear.x, msg->twist.linear.y, msg->twist.linear.z};
-    _cartesian_velocity.angular = (Point){msg->twist.angular.x, msg->twist.angular.y, msg->twist.angular.z};
-    _cartesian_effort.force = (Point){msg->wrench.force.x, msg->wrench.force.y, msg->wrench.force.z};
-    _cartesian_effort.torque = (Point){msg->wrench.torque.x, msg->wrench.torque.y, msg->wrench.torque.z}; 
+    _cartesian_pose = msg->pose;
+    _cartesian_velocity = msg->twist;
+    _cartesian_effort = msg->wrench;
 }
 
 std::vector<std::string> BaxterLimb::joint_names()
@@ -269,17 +267,17 @@ std::vector<double> BaxterLimb::joint_efforts()
     return std::vector<double>(_joint_effort, _joint_effort + sizeof _joint_effort / sizeof _joint_effort[0]);
 }
 
-Pose BaxterLimb::endpoint_pose()
+gm::Pose BaxterLimb::endpoint_pose()
 {
     return _cartesian_pose;
 }
 
-Twist BaxterLimb::endpoint_velocity()
+gm::Twist BaxterLimb::endpoint_velocity()
 {
     return _cartesian_velocity;
 }
 
-Wrench BaxterLimb::endpoint_effort()
+gm::Wrench BaxterLimb::endpoint_effort()
 {
     return _cartesian_effort;
 }
@@ -419,30 +417,21 @@ bool BaxterLimb::in_range(std::vector<double> error)
     return temp;
 }
 
-JointPositions BaxterLimb::get_position(PRYPose x)
+JointPositions BaxterLimb::get_position(gv::PRYPose x)
 {
     std::string serv = "sdk/robot/limb/"+_name+"/solve_ik_position";
     ros::ServiceClient client = _nh.serviceClient<baxter_msgs::SolvePositionIK>(serv);
     baxter_msgs::SolvePositionIK srv;
     geometry_msgs::PoseStamped posestamp;
-    Pose mypose;
-    mypose.point = x.point;
-    mypose.quaternion = toQuat(x.pry);
+    gm::Pose mypose;
+    mypose.position = x.position;
+    mypose.orientation = toQuat(x.pry);
 //     std::cout<<"\n";
-    posestamp.pose.position.x = mypose.point.x;
+    posestamp.pose.position = mypose.position;
 //     std::cout<<mypose.point.x<<" ";
-    posestamp.pose.position.y = mypose.point.y;
-//     std::cout<<mypose.point.y<<" ";
-    posestamp.pose.position.z = mypose.point.z;
 //     std::cout<<mypose.point.z<<" ";
-    posestamp.pose.orientation.x = mypose.quaternion.x;
+    posestamp.pose.orientation = mypose.orientation;
 //     std::cout<<mypose.quaternion.x<<" ";
-    posestamp.pose.orientation.y = mypose.quaternion.y;
-//     std::cout<<mypose.quaternion.y<<" ";
-    posestamp.pose.orientation.z = mypose.quaternion.z;
-//     std::cout<<mypose.quaternion.z<<" ";
-    posestamp.pose.orientation.w = mypose.quaternion.w;
-//     std::cout<<mypose.quaternion.w<<" ";
     posestamp.header.frame_id = "base";
     srv.request.pose_stamp.push_back(posestamp);
 //     std::cout<<"\n";
@@ -456,7 +445,10 @@ JointPositions BaxterLimb::get_position(PRYPose x)
                 positions.angles = srv.response.joints[i].angles;
             }
             else
+            {
                 ROS_ERROR("Not a valid pose");
+                positions.angles.clear();
+            }
         }
     }
     else
@@ -465,31 +457,31 @@ JointPositions BaxterLimb::get_position(PRYPose x)
     return positions;
 }
 
-void BaxterLimb::set_position_quick(PRYPose mypose, ros::Duration timeout)
+int BaxterLimb::set_position_quick(gv::PRYPose mypose, ros::Duration timeout)
 {
     JointPositions positions = get_position(mypose);
     if(positions.angles.empty())
-        return; 
+        return -1;
     
-    quickly_to_position(positions, timeout);
+    return quickly_to_position(positions, timeout);
 }
 
-void BaxterLimb::set_position_accurate(PRYPose mypose, ros::Duration timeout)
+int BaxterLimb::set_position_accurate(gv::PRYPose mypose, ros::Duration timeout)
 {
     JointPositions positions = get_position(mypose);
     if(positions.angles.empty())
-        return;
+        return -1;
     
-    accurate_to_position(positions, timeout);
+    return accurate_to_position(positions, timeout);
 }
 
-void BaxterLimb::set_position(PRYPose mypose, ros::Duration timeout)
+int BaxterLimb::set_position(gv::PRYPose mypose, ros::Duration timeout)
 {
     JointPositions positions = get_position(mypose);
     if(positions.angles.empty())
-        return;
+        return -1;
     
-    to_position(positions, timeout);
+    return to_position(positions, timeout);
 }
 
 void BaxterLimb::_limit_velocity(std::vector<double> &vel)
@@ -729,81 +721,11 @@ int BaxterLimb::to_position(JointPositions desired, ros::Duration timeout)
     return -1;
 }
 
-int BaxterLimb::endpoint_control(Point point_err)
-{
-    //double hz = 100;
-    std::cout<<"endpoint control";
-    Point new_point = _cartesian_pose.point - point_err;
-//     _cartesian_pose.point.x + point_err.x;
-//     _cartesian_pose.point.y + point_err.y;
-//     _cartesian_pose.point.z + point_err.z;
-    PRYPose pos;
-    pos.point = new_point;
-    pos.pry = toPRY(_cartesian_pose.quaternion);
-    JointPositions desired = get_position(pos);
-    if(desired.angles.empty())
-        return 0;
-    set_joint_positions(desired);
-    return 1;
-    /*
-    std::vector<double> position = desired.angles;
-    std::vector<double> integral(position.size(),0);
-    std::vector<double> derivative(position.size(),0);
-    std::vector<double> error(position.size(),0);
-    JointVelocities output;
-    output.names = desired.names;
-    
-        /*dt = ros::Time::now() - last;
-        dt.nsec = (toSec(dt.nsec) < 1/hz ? toNsec(1/hz) : dt.nsec);
-        last = ros::Time::now();
-        error = v_difference(position, joint_angles());
-        //integral = v_sum(integral, product(error, toSec(dt.nsec)));
-        //_saturate(integral, 1);
-        //v_print(error, "error");
-        //derivative = quotient(v_difference(error, previous_error), toSec(dt.nsec));
-        output.velocities = compute_gains(error, integral, derivative, FAST);
-        //_limit_acceleration(output.velocities, last_vel, toSec(dt.nsec));
-        _limit_velocity(output.velocities);
-        set_joint_velocities(output);
-//         last_vel = output.velocities;
-//         previous_error = error;        
-            
-    //if(_in_range(error, FAST))
-//        return 1;
-    
-    return 1;*/
-}
-
 
 /*----------------------------------------------------------------------
  * Everything after this line is not a part of the BaxterLimb Class
  * ---------------------------------------------------------------------*/
 
-Quaternion toQuat(PRY pry)
-{
-    Quaternion quat;
-    double p = pry.pitch/2;
-    double r = pry.roll/2;
-    double y = pry.yaw/2;
-    quat.w = cos(r)*cos(p)*cos(y) + sin(r)*sin(p)*sin(y); // q0
-    quat.x = sin(r)*cos(p)*cos(y) - cos(r)*sin(p)*sin(y); // q1
-    quat.y = cos(r)*sin(p)*cos(y) + sin(r)*cos(p)*sin(y); // q2
-    quat.z = cos(r)*cos(p)*sin(y) - sin(r)*sin(p)*cos(y); // q3
-    return quat;
-}
-    
-PRY toPRY(Quaternion quat)
-{
-    PRY pry;
-    double q0 = quat.w;
-    double q1 = quat.x;
-    double q2 = quat.y;
-    double q3 = quat.z;
-    pry.pitch = asin(2*(q0*q2 - q3*q1));
-    pry.roll = atan2(2*(q0*q1 + q2*q3),1-2*(q1*q1 + q2*q2));
-    pry.yaw = atan2(2*(q0*q3 + q1*q2),1-2*(q2*q2 + q3*q3));
-    return pry;
-}
 
 void v_print(std::vector<double> x)
 {
