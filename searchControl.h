@@ -28,13 +28,13 @@ class SearchControl
     // Search Geometry should be set and checked to ensure valid choices are made
     
 public:
-    SearchControl(BaxterLimb*, BaxterLimb*, BaxterCamera*, PRYPose); //cam hand, other hand, cam
+    SearchControl(BaxterLimb*, BaxterLimb*, BaxterCamera*); //cam hand, other hand, cam
     
     //Use this to define geometry
     SearchGeometry geometry;
     
     double min_area;       // smallest area to be considered an object. default 100
-    Point allowable_error;
+    gv::Point allowable_error;
     
     void set_predictor(Predictor);     //use to ensure 0 <= k <= 1
     
@@ -75,14 +75,14 @@ private:
     void _reset_roi();                                   //  sets _roi to (-1,-1)
     void _set_roi(cv::Rect, double);                     //  set _roi based on _obj_loc and area of obj
     cv::Point _get_centroid(std::vector< cv::Point >);   //  returns centroid of a set of points, calculated as mean of points
-    void _transform(Point &, double);                    //  transforms dimensionless error to real distance. accounts for hand rotation
+    void _transform(gv::Point &, double);                    //  transforms dimensionless error to real distance. accounts for hand rotation
     cv::Rect _get_bounds(std::vector<cv::Point>);        //  returns a bounding rectangle for the contour
     std::vector<cv::Point> _corners(cv::Rect);
     std::vector<cv::Point> _increase_bounds(std::vector<cv::Point>, cv::Point);
     cv::Rect _restrict(std::vector<cv::Point>, double,double);     //  returns rectangle enclosed in size of image
     cv::Rect _getBlobRoi(cv::Point2d pt);
-    std::vector<cv::Point> _getBlob(cv::Mat);            //   return contour of largest blob in image
-    void _endpoint_control(Point);
+    std::vector<cv::Point> _getBlob(cv::Mat&);            //   return contour of largest blob in image
+    void _endpoint_control(gv::Point);
     
     //Search variables
     cv::Point2d _obj_loc;                                //  location of found object in _object()
@@ -103,7 +103,7 @@ SearchControl::SearchControl()
         You should never see this error message.");
 }
 
-SearchControl::SearchControl(BaxterLimb* a, BaxterLimb* b, BaxterCamera* cam, PRYPose home)
+SearchControl::SearchControl(BaxterLimb* a, BaxterLimb* b, BaxterCamera* cam)
 {
     _cam_hand = a;
     _manip_hand = b;
@@ -112,7 +112,6 @@ SearchControl::SearchControl(BaxterLimb* a, BaxterLimb* b, BaxterCamera* cam, PR
     _reset_loc();
     _reset_roi();
     min_area = 100;
-    geometry.home = home;
     scene_height = _search_cam->height();
     scene_width = _search_cam->width();
     _tracking = false;
@@ -132,33 +131,33 @@ void SearchControl::search()
         case 0:
             //  Searching, move around in bounding box
             //  obj found ? _state = 1 : _state = _state
-            _search();
             std::cout<<"0";
+            _search();
             break;
         case 1:
             //  Found something, move over
             //  obj in bounds ? move over, _state = 2 : state = 0
+            std::cout<<"1";
             _tracking = true;
             _move_to_piece();
-            std::cout<<"1";
             break;
         case 2:
             //  Verify piece
             //  known piece ? _state = 3 : _state = 0
-            _verify_piece();
             std::cout<<"2";
+            _verify_piece();
             break;
         case 3:
             //  Grab piece
             //  piece grabbed ? _state = 4 : _state = 3
-            _grab_piece();
             std::cout<<"3";
+            _grab_piece();
             break;
         case 4:
             //  Move over deposit box, deposit piece
             //  move over, piece released -> _state = 0
-            _deposit_piece();
             std::cout<<"4";
+            _deposit_piece();
             break;
         default:
             //Shouldn't happen
@@ -174,24 +173,29 @@ void SearchControl::_init_search()
 {
     _search_initialized = true;
     _state = 0;
-    allowable_error = (Point){10,10,0};
-    PRYPose pos = geometry.home;
+    allowable_error = gv::Point(10,10,1); // need the 1 so err < allow is true
+    if (geometry.home == gv::PRYPose(0))
+    {
+        gm::Pose pose = _cam_hand->endpoint_pose();
+        geometry.home.position = pose.position;
+        geometry.home.pry = toPRY(gv::Quaternion(pose.orientation));
+    }
+    gv::PRYPose pos = geometry.home;
     if (geometry.table_height == 0 || geometry.height_offset == 0)
-        pos.point.z = .15;
+        pos.position.z = .15;
     else
-        pos.point.z = geometry.table_height + geometry.height_offset;
-    std::cout<<"height: "<<pos.point.z<<"\n";
-    std::cout<<_search_cam->height()<<" "<<_search_cam->width();    std::cout<<"roll: " << pos.pry.roll <<"\npitch: "<<pos.pry.pitch<<"\nyaw: "<<pos.pry.yaw<<"\n";
-    Pose pos2;
-    pos2.point = pos.point;
-    pos2.quaternion = toQuat(pos.pry);
-    /*std::cout<<"w: "<<pos2.quaternion.w<<"\nx: "<<pos2.quaternion.x<<"\n";
-    std::cout<<"y: "<<pos2.quaternion.y<<"\nz: "<<pos2.quaternion.z<<"\n";
-    pos.pry = toPRY(pos2.quaternion);
-    std::cout<<"roll: " << pos.pry.roll <<"\npitch: "<<pos.pry.pitch<<"\nyaw: "<<pos.pry.yaw<<"\n";
-    */
+        pos.position.z = geometry.table_height + geometry.height_offset;
+    //std::cout<<"height: "<<pos.position.z<<"\n";
+    //std::cout<<_search_cam->height()<<" "<<_search_cam->width();    std::cout<<"roll: " << pos.pry.roll <<"\npitch: "<<pos.pry.pitch<<"\nyaw: "<<pos.pry.yaw<<"\n";
     ros::Duration timeout(10);
-    _cam_hand->set_position_quick(pos, timeout);
+    if ( _cam_hand->set_position_quick(pos, timeout) < 0 )
+    {
+        ROS_ERROR("Unable to initialize search position. \n Please restart \
+             at new location");
+        _search_initialized = false;
+        search(); //to ensure searching doesn't begin
+    }
+ 
 }
 
 void SearchControl::_search()
@@ -205,29 +209,36 @@ void SearchControl::_search()
 void SearchControl::_move_to_piece()
 {
     //  _state == 1
-    Point err; //difference between centroid of object and center of image;
+    gv::Point err; //difference between centroid of object and center of image;
     err.x = _obj_loc.x - scene_width/2; 
     err.y = _obj_loc.y - scene_height/2;
-    // pixels -> pixels/pixel
-    err.y /= scene_height;
-    err.x /= scene_width; 
-    
-    double yaw = toPRY(_cam_hand->endpoint_pose().quaternion).yaw;
-    _transform(err, yaw);
-    err.z = 0;
-    if (err < allowable_error)
+//     err.print();
+    gv::Point temp = abs(err);
+    //temp.print();
+    //allowable_error.print();
+    if (temp < allowable_error)
     {
         _state = 2;
         std::cout<<"arrived at object";
         return;
     }
+    // pixels -> pixels/pixel
+    err.y /= scene_height;
+    err.x /= scene_width; 
+    
+    gm::Pose pos = _cam_hand->endpoint_pose();
+    gm::Quaternion quat = pos.orientation;
+    gv::Quaternion orient = quat;
+    double yaw = toPRY(orient).yaw;
+    _transform(err, yaw);
+    err.z = 0;
     /*std::cout<<"y position: " << _obj_loc.y;
     std::cout<<"  y error: " << err.y << "\n";
     std::cout<<"x position: " << _obj_loc.x;
     std::cout<<"  x error: " << err.x << "\n";*/
-    
     _state = 0;
-    _cam_hand->endpoint_control(err);
+    _endpoint_control(err);
+    
 //     if(_roi_object())
 //     {
 //         ros::spinOnce();
@@ -244,12 +255,39 @@ void SearchControl::_move_to_piece()
 void SearchControl::_verify_piece()
 {
     //  _state == 2
-    _state = 0; // ONLY VALID while testing visual servoing
+    _state = 3; // Ignore validation for now, go straight to picking up
 }
 
 void SearchControl::_grab_piece()
 {
     //  _state == 3
+    _cam_hand->gripper->block = true;
+    _cam_hand->gripper->go_to(100);
+    float range = _cam_hand->gripper->range;
+    gv::Pose pose = _cam_hand->endpoint_pose();
+    gv::PRYPose prypose(pose);
+    prypose.print();
+    range -= _cam_hand->gripper->length();
+    std::cout<<"range: "<<range<<std::endl;
+    gv::PRYPose original(prypose);
+    prypose.position.z -= (range - .1); //go 2cm over object quick
+    ros::Duration timeout(2);
+    prypose.print();
+    ros::Time start = ros::Time::now();
+    _cam_hand->set_position_quick(prypose, timeout);
+    //prypose.position.z -= .015;  //go accurately to 
+    if ( _cam_hand->set_position_accurate(prypose, timeout) > 0 )
+    { 
+        _cam_hand->gripper->go_to(50);
+        ros::Rate delay(2);
+        delay.sleep();
+    }
+    else
+        ROS_ERROR("Unable to grab a piece at the specified location");
+    if ( _cam_hand->set_position_quick(original, timeout) < 0 )
+            ROS_ERROR("Return me to start position");
+        _cam_hand->gripper->block = false;
+    _state = 0;   //this should be 4 if he grabbed the piece
 }
 
 void SearchControl::_deposit_piece()
@@ -307,11 +345,23 @@ bool SearchControl::_roi_object()
     return true;
 }
 
-std::vector<cv::Point> SearchControl::_getBlob(cv::Mat scene)
+std::vector<cv::Point> SearchControl::_getBlob(cv::Mat& scene)
 {
     // finds outline of the largest non-white object
+    std::vector<cv::Point> temp(0,cv::Point(0,0));
+    if (scene.empty())
+    {
+        //ROS_ERROR("Image to search is empty");
+        return temp;
+    }
     cv::Mat thresh;
-    cv::cvtColor(scene, thresh, CV_BGR2GRAY);
+    try {
+        cv::cvtColor(scene, thresh, CV_BGR2GRAY);
+    }
+    catch (cv::Exception) {
+        ROS_ERROR("Unable to convert image to greyscale");
+        return temp;
+    }
     cv::threshold(thresh, thresh,127,255,cv::THRESH_BINARY_INV); 
     
     std::vector< std::vector< cv::Point > > contours;
@@ -322,7 +372,7 @@ std::vector<cv::Point> SearchControl::_getBlob(cv::Mat scene)
     //cv::Canny(thresh, canny, 5, 250, 3);
     cv::imshow("thresholded", thresh);
     cv::findContours(thresh, contours, CV_RETR_CCOMP, CV_CHAIN_APPROX_SIMPLE);
-
+    
     int iters = contours.size();
     for(int i = 0; i < iters; i++)
     {
@@ -336,9 +386,7 @@ std::vector<cv::Point> SearchControl::_getBlob(cv::Mat scene)
     cv::imshow("blob", thresh);
     if (largest_area < min_area)
     {
-        std::vector<cv::Point> x = contours[0];
-        x.clear();
-        return x;
+        return temp;
     }
     
     return contours[largest_contour_index];
@@ -388,14 +436,16 @@ bool SearchControl::_track_object()
     }
 }
 
-void SearchControl::_endpoint_control(Point err)
+void SearchControl::_endpoint_control(gv::Point err)
 {
-    PRYPose pose = geometry.home;
-    pose.point = _cam_hand->endpoint_pose().point;
-    pose.point -= err;
+    std::cout<<"moving"<<std::endl;
+    gv::PRYPose pose = geometry.home;
+    pose.position = _cam_hand->endpoint_pose().position;
+    pose.position -= err;
     JointPositions desired = _cam_hand->get_position(pose);
     if(desired.angles.empty())
         return;
+    //v_print(desired.angles, "positions");
     _cam_hand->set_joint_positions(desired);
 }
 
@@ -542,7 +592,7 @@ void SearchControl::_reset_roi()
     _roi.height = scene_height;
 }
 
-void SearchControl::_transform(Point &err, double yaw)
+void SearchControl::_transform(gv::Point &err, double yaw)
 {
     // ASSUME THE CAMERA IS POINTING STRAIGHT DOWN (ALONG Z AXIS)
     float range = _cam_hand->gripper->range;

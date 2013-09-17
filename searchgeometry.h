@@ -27,15 +27,15 @@ public:
     BoundingBox search_path;//  box to move gripper around while searching -- inner offset of _border
     double table_height;   //  height of table from Baxter's perspective
     double height_offset;  //  height off table for Baxter's gripper when searching for pieces
-    PRYPose reset_button;  //  location of button to remove any pieces still in view and place new pieces 
+    gv::PRYPose reset_button;  //  location of button to remove any pieces still in view and place new pieces 
     BoundingBox deposit_border; //  location to place found objects
     std::vector<BoundingBox> deposit_containers;  //  containers in deposit_border
-    PRYPose home;               // home locationd
+    gv::PRYPose home;               // home locationd
     
     //Search area parameters
     double borderMin(char); //get minimum dimension of _border in 'x' or 'y'
     double borderMax(char); //get maximum dimension of _border in 'x' or 'y'
-    PRYPose getNextPosition(PRYPose); //return a new position to move to for searching
+    gv::PRYPose getNextPosition(gv::PRYPose); //return a new position to move to for searching
     
     //deposit box drawing parameters
     void setPixelScale(int, int);
@@ -48,7 +48,7 @@ private:
     void Init();            //  Initializing common to both constructors    
     
     //deposit box image params
-    cv::Mat _depositBox;    //  picture representing tray to place legos on
+     cv::Mat _depositBox;    //  picture representing tray to place legos on
     int _xPixelScale;             //  x scale between image representation of box and dimension in m
     int _yPixelScale;             //  y scale between image representation of box and dimension in m
     int _xBuffer;                 //  x offset on images
@@ -65,7 +65,7 @@ private:
     void _drawBox(cv::Mat&, BoundingBox,bool);     //draw box on img
     cv::Scalar _randomColor();                     //return random color
     BoundingBox _pixelAdjust(BoundingBox);         //multiplies boundbox members by pixel scales
-    PRYPose _get_next_search_position(PRYPose, int);
+    gv::PRYPose _get_next_search_position(gv::PRYPose, int);
     
 };
 
@@ -139,7 +139,7 @@ double SearchGeometry::borderMin(char coor)
     return min;
 }
 
-PRYPose SearchGeometry::_get_next_search_position(PRYPose current, int iter)
+gv::PRYPose SearchGeometry::_get_next_search_position(gv::PRYPose current, int iter)
 {
     //iter helps keeps a 'timeout' on this function during recursion
     if(iter > 4)
@@ -153,8 +153,8 @@ PRYPose SearchGeometry::_get_next_search_position(PRYPose current, int iter)
     cv::Point2d pos(xPos,yPos);
     if(_inside(search_border,pos))
     {   
-        current.point.x = xPos;
-        current.point.y = yPos;
+        current.position.x = xPos;
+        current.position.y = yPos;
         return current;
     }
     else
@@ -162,7 +162,7 @@ PRYPose SearchGeometry::_get_next_search_position(PRYPose current, int iter)
     
 }
 
-PRYPose SearchGeometry::getNextPosition(PRYPose current)
+gv::PRYPose SearchGeometry::getNextPosition(gv::PRYPose current)
 {
     return _get_next_search_position(current,0);
 }
