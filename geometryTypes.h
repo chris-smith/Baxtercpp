@@ -20,11 +20,19 @@ struct PRYPose{ Point point; PRY pry; };
 struct Point
 {
     double x, y, z;
+    Point(double a, double b, double c) : x(a), y(b), z(c) {}
     Point& operator+=(const Point &a)
     {
         this->x = this->x + a.x;
         this->y = this->y + a.y;
         this->z = this->z + a.z;
+        return *this;
+    }
+    Point & operator+=(const double &a)
+    {
+        this->x = this->x + a;
+        this->y = this->y + a;
+        this->z = this->z + a;
         return *this;
     }
     Point& operator-=(const Point &a)
@@ -34,11 +42,25 @@ struct Point
         this->z = this->z - a.z;
         return *this;
     }
+    Point & operator-=(const double &a)
+    {
+        this->x = this->x - a;
+        this->y = this->y - a;
+        this->z = this->z - a;
+        return *this;
+    }
     Point& operator*=(const Point &a)
     {
         this->x = this->x * a.x;
         this->y = this->y * a.y;
         this->z = this->z * a.z;
+        return *this;
+    }
+    Point & operator*=(const double &a)
+    {
+        this->x = this->x * a;
+        this->y = this->y * a;
+        this->z = this->z * a;
         return *this;
     }
     Point& operator/=(const Point &a)
@@ -48,61 +70,46 @@ struct Point
         this->z = this->z / a.z;
         return *this;
     }
+    Point & operator/=(const double &a)
+    {
+        this->x = this->x / a;
+        this->y = this->y / a;
+        this->z = this->z / a;
+        return *this;
+    }
     const Point operator+(const Point& a) const
+    {
+        return Point(*this) += a;
+    }
+    const Point operator+(const double& a) const
     {
         return Point(*this) += a;
     }
     const Point operator-(const Point& a) const
     {
-        Point out = *this;
-        out -= a;
-        return out;
+        return Point(*this) -= a;
+    }
+    const Point operator-(const double& a) const
+    {
+        return Point(*this) -= a;
     }
     const Point operator*(const Point& a) const
     {
-        Point out = *this;
-        out *= a;
-        return out;
+        return Point(*this) *= a;
+    }
+    const Point operator*(const double& a) const
+    {
+        return Point(*this) *= a;
     }
     const Point operator/(const Point& a) const
     {
-        Point out = *this;
-        out /= a;
-        return out;
+        return Point(*this) /= a;
+    }
+    const Point operator/(const double& a) const
+    {
+        return Point(*this) /= a;
     }
 };
-Point operator+(const Point &a, double &b)
-{
-    Point ret;
-    ret.x = a.x + b;
-    ret.y = a.y + b;
-    ret.z = a.z + b;
-    return ret;
-}
-Point operator-(const Point &a, double &b)
-{
-    Point ret;
-    ret.x = a.x - b;
-    ret.y = a.y - b;
-    ret.z = a.z - b;
-    return ret;
-}
-Point operator*(const Point &a, double &b)
-{
-    Point ret;
-    ret.x = a.x * b;
-    ret.y = a.y * b;
-    ret.z = a.z * b;
-    return ret;
-}
-Point operator/(const Point &a, double &b)
-{
-    Point ret;
-    ret.x = a.x / b;
-    ret.y = a.y / b;
-    ret.z = a.z / b;
-    return ret;
-}
 bool operator<(const Point &a, const Point &b)
 {
     bool ret = true;
@@ -126,6 +133,10 @@ bool operator==(const Point &a, const Point &b)
     ret = ret && (a.y == b.y);
     ret = ret && (a.z == b.z);
     return ret;
+}
+bool operator !=(const Point &a, const Point &b)
+{
+    return !(a == b);   
 }
 
 struct Quaternion{ double x; double y; double z; double w; };
