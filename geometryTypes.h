@@ -24,7 +24,7 @@ namespace gm = geometry_msgs;
 
 
 //  Point Operators  ------------------------------
-namespace gvar{
+namespace geometry_variables{
     //  Geometry Variables
     //  Can also be referred to as gv
     class Point
@@ -429,7 +429,10 @@ namespace gvar{
     }
 }
 
-namespace gv = gvar;
+
+/*       Namespace Shorthand
+ * *************************/
+namespace gv = geometry_variables;
 
 gv::Quaternion toQuat(gv::PRY pry)
 {
