@@ -91,6 +91,8 @@ public:
     int set_position_quick(gv::PRYPose, ros::Duration);    //moves endpoint to the specified position quickly
     int set_position_accurate(gv::PRYPose, ros::Duration); //moves endpoint to the specified position accurately
     int set_position(gv::PRYPose, ros::Duration);          //moves endpoint to the specified position using position controller
+    int set_endpoint_velocity(gv::PRYPose);                //calls set_velocities after getting JointPosition exits
+    int set_velocities(JointPositions desired);            //sets velocities once
     
     /*    Controllers
      *      
@@ -482,6 +484,32 @@ int BaxterLimb::set_position(gv::PRYPose mypose, ros::Duration timeout)
         return -1;
     
     return to_position(positions, timeout);
+}
+
+int BaxterLimb::set_endpoint_velocity(gv::PRYPose mypose)
+{
+    JointPositions desired = get_position(mypose);
+    set_velocities(desired);
+    
+}
+
+int BaxterLimb::set_velocities(JointPositions desired)
+{
+    std::vector<double> position = desired.angles;
+    std::vector<double> current = joint_angles();
+    std::vector<double> error = v_difference(current, position);
+    std::vector<double> integral(position.size(),0);
+    std::vector<double> derivative(position.size(),0);
+    
+    JointVelocities output;
+    output.names = desired.names;
+
+    error = v_difference(position, joint_angles());
+    output.velocities = compute_gains(error, integral, derivative, SLOW);
+    _limit_velocity(output.velocities);
+    set_joint_velocities(output);
+    ros::spinOnce();
+    return 1;
 }
 
 void BaxterLimb::_limit_velocity(std::vector<double> &vel)
