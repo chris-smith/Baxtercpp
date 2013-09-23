@@ -94,12 +94,13 @@ void BaxterGripper::_init()
     _pub_calibrate = _nh.advertise<std_msgs::Empty>(topic+"command_calibrate", _bufferSize);
     _pub_command = _nh.advertise<baxter_msgs::GripperCommand>(topic+"command_set",_bufferSize);
     _pub_goto = _nh.advertise<std_msgs::Float32>(topic+"command_goto",_bufferSize);
-    calibrate();
     _sub_identity = _nh.subscribe(topic+"identity",_bufferSize,&BaxterGripper::_on_gripper_identity, this); 
     _sub_properties = _nh.subscribe(topic+"properties",_bufferSize,&BaxterGripper::_on_gripper_properties, this);
     _sub_state = _nh.subscribe(topic+"state",_bufferSize,&BaxterGripper::_on_gripper_state, this);
     _sub_ir_range = _nh.subscribe("/robot/range/"+name+"_hand_range",_bufferSize,&BaxterGripper::_on_ir_range, this);
     
+    
+    calibrate();
     block = false;
     gripperLength = 0;
     type = CUSTOM;

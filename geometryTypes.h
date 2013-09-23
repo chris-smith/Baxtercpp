@@ -5,6 +5,8 @@
 #include "geometry_msgs/Wrench.h"
 #include "geometry_msgs/Quaternion.h"
 #include "geometry_msgs/Vector3.h"
+//#define _USE_MATH_DEFINES
+//#include <math.h>
 #ifndef GEOMETRY_TYPES
 #define GEOMETRY_TYPES
 
@@ -22,6 +24,46 @@ struct PRYPose{ Point point; PRY pry; };
 *********************************/
 namespace gm = geometry_msgs;
 
+
+#define PI 3.141592653589793238463
+
+struct JointPositions{ std::vector<std::string> names; std::vector<double> angles; };
+struct JointVelocities{ 
+    std::vector<std::string> names; 
+    std::vector<double> velocities; 
+    JointVelocities& operator*=(const double &a)
+    {
+        for (int i = 0; i < this->velocities.size(); i++)
+        {
+            this->velocities[i] *= a;
+        }
+        return *this;
+    }
+};
+bool operator<(const JointVelocities& a, const JointVelocities &b)
+{
+    int asize = a.velocities.size();
+    int bsize = b.velocities.size();
+    int size = (asize < bsize ? asize : bsize);
+    bool ret = true;
+    for (int i = 0; i < size; i++)
+    {
+        ret = ret && (a.velocities[i] < b.velocities[i]);
+    }
+    return ret;
+}
+bool operator>(const JointVelocities& a, const JointVelocities &b)
+{
+    int asize = a.velocities.size();
+    int bsize = b.velocities.size();
+    int size = (asize < bsize ? asize : bsize);
+    bool ret = true;
+    for (int i = 0; i < size; i++)
+    {
+        ret = ret && (a.velocities[i] > b.velocities[i]);
+    }
+    return ret;
+}
 
 //  Point Operators  ------------------------------
 namespace geometry_variables{

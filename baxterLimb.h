@@ -31,8 +31,6 @@
  * 
  * -----------------------------------------*/
 
-struct JointPositions{ std::vector<std::string> names; std::vector<double> angles; };
-struct JointVelocities{ std::vector<std::string> names; std::vector<double> velocities; };
 struct Gains{ double kp; double ki; double kd; };
 std::string joint_ids[numJoints] = {"_s0","_s1","_e0","_e1","_w0","_w1","_w2"};
 
@@ -93,7 +91,7 @@ public:
     int set_position(gv::PRYPose, ros::Duration);          //moves endpoint to the specified position using position controller
     int set_endpoint_velocity(gv::PRYPose);                //calls set_velocities after getting JointPosition exits
     int set_velocities(JointPositions desired);            //sets velocities once
-    
+    JointVelocities get_velocities(JointPositions); // return velocities computed to reach position
     /*    Controllers
      *      
      * uses velocity controller to move to specified positions
@@ -493,6 +491,24 @@ int BaxterLimb::set_endpoint_velocity(gv::PRYPose mypose)
     
 }
 
+JointVelocities BaxterLimb::get_velocities(JointPositions desired)
+{
+    std::vector<double> position = desired.angles;
+    std::vector<double> current = joint_angles();
+    std::vector<double> error = v_difference(current, position);
+    std::vector<double> integral(position.size(),0);
+    std::vector<double> derivative(position.size(),0);
+    
+    JointVelocities output;
+    output.names = desired.names;
+
+    error = v_difference(position, joint_angles());
+    output.velocities = compute_gains(error, integral, derivative, FAST);
+    _limit_velocity(output.velocities);
+   
+    return output;
+}
+
 int BaxterLimb::set_velocities(JointPositions desired)
 {
     std::vector<double> position = desired.angles;
@@ -644,7 +660,7 @@ int BaxterLimb::quickly_to_position(JointPositions desired, ros::Duration timeou
     output.names = desired.names;
     //v_print(integral);
     
-    while( !_in_range(error,FAST) && ( ros::Time::now() - start < timeout ))
+    while( !_in_range(error,FAST) && ( ros::Time::now() - start < timeout ) && ros::ok())
     {
         dt = ros::Time::now() - last;
         dt.nsec = (toSec(dt.nsec) < 1/hz ? toNsec(1/hz) : dt.nsec);
@@ -696,7 +712,7 @@ int BaxterLimb::accurate_to_position(JointPositions desired, ros::Duration timeo
     JointVelocities output;
     output.names = desired.names;
     
-    while( !_in_range(error,SLOW) && ( ros::Time::now() - start < timeout ))
+    while( !_in_range(error,SLOW) && ( ros::Time::now() - start < timeout ) && ros::ok())
     {
         dt = ros::Time::now() - last;
         dt.nsec = (toSec(dt.nsec) < 1/hz ? toNsec(1/hz) : dt.nsec);
@@ -708,8 +724,10 @@ int BaxterLimb::accurate_to_position(JointPositions desired, ros::Duration timeo
         output.velocities = compute_gains(error, integral, derivative, SLOW);
         _limit_acceleration(output.velocities, last_vel, toSec(dt.nsec));
         set_joint_velocities(output);
+        
         last_vel = output.velocities;
         previous_error = error;        
+        
         ros::spinOnce();
         r.sleep();
     }

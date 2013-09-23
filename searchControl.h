@@ -28,7 +28,7 @@ class SearchControl
     // Search Geometry should be set and checked to ensure valid choices are made
     
 public:
-    SearchControl(BaxterLimb*, BaxterLimb*, BaxterCamera*); //cam hand, other hand, cam
+    SearchControl(BaxterLimb*, BaxterLimb*, BaxterCamera*); //cam hand, other hand, search cam, control cam
     
     //Use this to define geometry
     SearchGeometry geometry;
@@ -44,12 +44,15 @@ public:
         // not perform distinct actions on the limbs/cameras you passed when
         // declaring an instance of this class.
     
+    void test_transform(gv::Point, double);
+    
 private:
     SearchControl(); //no access to default constructor
     
     BaxterLimb* _cam_hand;
     BaxterLimb* _manip_hand;
-    BaxterCamera* _search_cam;
+    BaxterCamera* _search_cam;          // used to find objects in scene
+    BaxterCamera* _control_cam;         // used to help control positioning of _search_cam
     cv::Mat whole_scene;
     
     //State trackers
@@ -76,6 +79,7 @@ private:
     void _set_roi(cv::Rect, double);                     //  set _roi based on _obj_loc and area of obj
     cv::Point _get_centroid(std::vector< cv::Point >);   //  returns centroid of a set of points, calculated as mean of points
     void _transform(gv::Point &, double);                    //  transforms dimensionless error to real distance. accounts for hand rotation
+    void _dist_transform(gv::Point &, double);
     cv::Rect _get_bounds(std::vector<cv::Point>);        //  returns a bounding rectangle for the contour
     std::vector<cv::Point> _corners(cv::Rect);
     std::vector<cv::Point> _increase_bounds(std::vector<cv::Point>, cv::Point);
@@ -84,6 +88,8 @@ private:
     std::vector<cv::Point> _getBlob(cv::Mat&);            //   return contour of largest blob in image
     void _endpoint_control(gv::Point);
     void _endpoint_control_accurate(gv::Point err);
+    void _drop_to_table(gv::PRYPose);
+    
     
     //Search variables
     cv::Point2d _obj_loc;                                //  location of found object in _object()
@@ -260,6 +266,29 @@ void SearchControl::_verify_piece()
     _state = 3; // Ignore validation for now, go straight to picking up
 }
 
+void SearchControl::test_transform(gv::Point pt, double yaw)
+{
+    double yaw_initial = PI/2;
+    _dist_transform(pt, yaw + yaw_initial);
+    pt.print();
+    
+}
+
+JointVelocities jv_floor(JointVelocities a, JointVelocities b)
+{
+    // returns the lowest value of each a and b
+    int asize = a.velocities.size();
+    int bsize = b.velocities.size();
+    int size = (asize < bsize ? asize : bsize);
+    for (int i = 0 ; i < size; i++)
+    {
+        a.velocities[i] = (a.velocities[i] < b.velocities[i] ?  \
+            b.velocities[i] : a.velocities[i]
+        );
+    }
+    return a;
+}
+
 void SearchControl::_grab_piece()
 {
     //  _state == 3
@@ -280,35 +309,49 @@ void SearchControl::_grab_piece()
     float range = _cam_hand->gripper->range;
     gv::Pose pose = _cam_hand->endpoint_pose();
     gv::PRYPose prypose(pose);
+    std::cout<<"\nPosition at Start of Grip";
     prypose.print();
     gv::PRYPose original(prypose);
     rotation = fabs(rotation);
     std::cout<<"rectangle size\n\tx: " << rect.size.width <<"\n\ty: " << rect.size.height;
     std::cout<<"\nrotation: " << rotation << std::endl;
+    gv::Point mult(1,1,0);
     if (rotation < 45)
     {
-        if (rect.size.width > rect.size.height)
+        if (rect.size.width > rect.size.height){
             rotation = 90 + rotation;
+//             mult = -1;
+        }
         else
             rotation = rotation;
     }
     else
     {   
-        if (rect.size.width > rect.size.height)
+        if (rect.size.width > rect.size.height){
             rotation = -( 90 - rotation );
-        else
+            mult.y = -1;
+            //mult.x = -1;
+        }
+        else{
             rotation = rotation;
+            //mult.x = -1;
+        }
+        
     }
     std::cout<<"new rotation: " << rotation << std::endl;
-    rotation = rotation*3.1416/180; //to radians
+    rotation = rotation*PI/180; //to radians
     prypose.pry.yaw += rotation; // ALSO NEED TO REORIENT HAND
-    gv::Point offset(-.03102, .025, 0); // .03302, .0127 -> camera to endpoint center
-    double yaw = prypose.pry.yaw;
-    _transform(offset, yaw);
+    gv::Point offset(0.0207, -.03002, 0); // .03302, .0127 -> camera to endpoint center
+    double yaw = prypose.pry.yaw - rotation;
+    //yaw -= 1.57;   // account for starting yaw
+    _dist_transform(offset, PI + yaw);
+    std::cout<<"transformed offset";
     offset.print();
     range -= _cam_hand->gripper->length();
     std::cout<<"range: "<<range<<std::endl;
-    prypose.position -= offset*3;
+    prypose.position -= offset;
+    std::cout<<"offset position";
+    prypose.print();
     
      ros::Duration timeout(8);
     _cam_hand->set_position_accurate(prypose, timeout); // move gripper over object
@@ -329,37 +372,91 @@ void SearchControl::_grab_piece()
         ROS_ERROR("Unable to grab a piece at the specified location");*/
     offset.x = 0;
     offset.y = 0;
-    offset.z = .02;
+    offset.z = .05;
     offset.print();
-    double force_start = _cam_hand->endpoint_effort().force.z;
-    force_start = fabs(force_start);
-    double force = force_start;
-    std::cout<<"force start: "<<force<<std::endl;
     _cam_hand->gripper->go_to(90);
-    while (force < 1.5*force_start)
-    {
-        _endpoint_control_accurate(offset);
-        ros::spinOnce();
-        force = _cam_hand->endpoint_effort().force.z;
-        force = fabs(force);
-        //std::cout<<force<<std::endl;
-    }
-    std::cout << " I've hit the table" << std::endl;
+    prypose.pry = toPRY(_cam_hand->endpoint_pose().orientation);
+    prypose.position = _cam_hand->endpoint_pose().position;
+    prypose.position -= offset;
+    _drop_to_table(prypose);
     _cam_hand->gripper->go_to(0);
     ros::Rate delay(2);
     delay.sleep();
     if ( _cam_hand->set_position_quick(original, timeout) < 0 )
         ROS_ERROR("Return me to home position");
     _cam_hand->gripper->block = false;
-    _state = 0;   //this should be 4 if he grabbed the piece
+    _state = 4;   //this should be 4 if he grabbed the piece
     std::cout<<std::endl<<"\t--- FINISHED GRABBING ---"<<std::endl;
 }
 
 void SearchControl::_deposit_piece()
 {
     //  _state == 4
-    
+    if (!_cam_hand->gripper->state.gripping){
+        ROS_ERROR("Failed to grab the piece");
+        _state = 0;
+        return;
+    }
+    gv::PRYPose dropoff;
+    dropoff.position = gv::Point(-.05, -.4, .2);
+    dropoff.pry = gv::PRY(0, 3.14, 1.57);
+    ros::Duration timeout(5);
+    int moved = _cam_hand->set_position_quick(dropoff, timeout);
+    if (moved < 0){
+        ROS_ERROR("Unable to move to dropoff location");
+        _state = 0;
+    }
+    if (!_cam_hand->gripper->state.gripping){
+        ROS_ERROR("Dropped the piece on route");
+        _state = 0;
+        return;
+    }
+    _cam_hand->gripper->go_to(100);
+    _state = 0;
     // If he drops the piece while moving to the box, turn his head light to RED
+}
+
+void SearchControl::_drop_to_table(gv::PRYPose prypose)
+{
+    JointPositions desired = _cam_hand->get_position(prypose);
+    JointVelocities veloc = _cam_hand->get_velocities(desired);
+    JointVelocities floor;
+    JointVelocities temp;
+    for (int i = 0; i < veloc.velocities.size(); i++)
+    {
+        floor.velocities.push_back(0.01);
+    }
+    floor.names = veloc.names;
+    int iter = 0;
+    double force_start = _cam_hand->endpoint_effort().force.z;
+    force_start = fabs(force_start);
+    double force = force_start;
+    std::cout<<"force start: "<<force<<std::endl;
+    int hit = 0;
+    while (hit < 2 && ros::ok())
+    {
+        //_endpoint_control_accurate(offset);
+        if (iter % 1000 == 0){
+            temp = _cam_hand->get_velocities(desired);
+            if (temp > floor)
+                veloc = temp;
+        }
+        _cam_hand->set_joint_velocities(veloc);
+        ros::spinOnce();
+        force = _cam_hand->endpoint_effort().force.z;
+        force = fabs(force);
+        if (force < 10) // 10 newtons
+            hit = 0;
+        else{
+            hit++;
+            std::cout<<"force: "<<force<<std::endl;
+        }   
+        
+    }
+    std::cout << " I've hit the table" << std::endl;
+    veloc *= -2;
+    
+    _cam_hand->set_joint_velocities(veloc); // go up just a little
 }
 
 bool SearchControl::_object()
@@ -669,6 +766,24 @@ void SearchControl::_reset_roi()
     _roi.y = 0;
     _roi.width = scene_width;
     _roi.height = scene_height;
+}
+
+void SearchControl::_dist_transform(gv::Point &err, double yaw)
+{
+    // transforms from local x,y coordinate system
+    //  to global x,y
+    double tempx, tempy;
+    tempx = err.x;
+    tempy = err.y;
+    //yaw -= 3.14;
+    // account for angle of hand (yaw)
+    // 0 yaw has gripper "facing" backwards
+    err.x = tempx*cos(yaw) - tempy*sin(yaw);
+    err.y = tempx*sin(yaw) + tempy*cos(yaw); 
+    
+    // account for offset of camera (in m)
+    /*
+     */
 }
 
 void SearchControl::_transform(gv::Point &err, double yaw)
