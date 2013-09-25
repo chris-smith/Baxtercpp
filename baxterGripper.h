@@ -130,7 +130,7 @@ void BaxterGripper::_on_ir_range(const sensor_msgs::Range::ConstPtr& msg)
 void BaxterGripper::_wait()
 {
     ros::Time start = ros::Time::now();
-    ros::Duration timeout(2.5);
+    ros::Duration timeout(3);
     while( state.moving && (ros::Time::now() - start < timeout) )
     {
         ros::spinOnce();
