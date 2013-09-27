@@ -15,10 +15,6 @@
 #include "baxterGripper.h"
 #include "geometryTypes.h"
 
-#define numJoints 7
-#define FAST true
-#define SLOW false
-
 
 /*------------------------------------------
  * Positive x direction --> Away from front plate
@@ -31,8 +27,6 @@
  * 
  * -----------------------------------------*/
 
-struct Gains{ double kp; double ki; double kd; };
-std::string joint_ids[numJoints] = {"_s0","_s1","_e0","_e1","_w0","_w1","_w2"};
 
 gv::Quaternion toQuat(gv::PRY);                             //convert pitch, roll, yaw to quaternion
 gv::PRY toPRY(gv::Quaternion);                              //convert quaternion to pitch, roll, yaw
@@ -51,6 +45,13 @@ void to_file(std::vector<double>, std::string, bool);
 
 #ifndef BAXTER_LIMB
 #define BAXTER_LIMB
+
+#define numJoints 7
+#define FAST true
+#define SLOW false
+
+struct Gains{ double kp; double ki; double kd; };
+std::string joint_ids[numJoints] = {"_s0","_s1","_e0","_e1","_w0","_w1","_w2"};
 
 class BaxterLimb
 {

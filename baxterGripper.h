@@ -62,6 +62,7 @@ private:
     void _on_gripper_properties(const baxter_msgs::GripperProperties::ConstPtr&);
     void _on_gripper_state(const baxter_msgs::GripperState::ConstPtr&);
     void _on_ir_range(const sensor_msgs::Range::ConstPtr&);
+    void _wait_for_subscriber(ros::Subscriber&);
     
     void _wait();                               //  waits until the gripper is no longer moving
 };
@@ -98,12 +99,29 @@ void BaxterGripper::_init()
     _sub_properties = _nh.subscribe(topic+"properties",_bufferSize,&BaxterGripper::_on_gripper_properties, this);
     _sub_state = _nh.subscribe(topic+"state",_bufferSize,&BaxterGripper::_on_gripper_state, this);
     _sub_ir_range = _nh.subscribe("/robot/range/"+name+"_hand_range",_bufferSize,&BaxterGripper::_on_ir_range, this);
-    
+    _wait_for_subscriber(_sub_identity);
+    _wait_for_subscriber(_sub_state);
+    _wait_for_subscriber(_sub_properties);
+    _wait_for_subscriber(_sub_ir_range);
     
     calibrate();
     block = false;
     gripperLength = 0;
     type = CUSTOM;
+}
+
+void BaxterGripper::_wait_for_subscriber(ros::Subscriber& sub)
+{
+    ros::Duration timeout(1);
+    ros::Time start = ros::Time::now();
+    ros::Rate r(10);
+    while (ros::Time::now() - start < timeout)
+    {
+        if(sub.getNumPublishers() > 0)
+            return;
+        r.sleep();
+    }
+    ROS_ERROR("Unable to subscribe to gripper topic [%s]", sub.getTopic().c_str());
 }
 
 void BaxterGripper::_on_gripper_identity(const baxter_msgs::GripperIdentity::ConstPtr& msg)
