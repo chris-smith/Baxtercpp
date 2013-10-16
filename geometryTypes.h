@@ -27,7 +27,21 @@ namespace gm = geometry_msgs;
 
 #define PI 3.141592653589793238463
 
-struct JointPositions{ std::vector<std::string> names; std::vector<double> angles; };
+class JointPositions{ 
+public:
+    std::vector<std::string> names; 
+    std::vector<double> angles; 
+    
+    void print()
+    {
+        for (int i = 0; i < names.size(); i++)
+        {
+            std::cout<< names[i] << ": ";
+            std::cout<< angles[i] << "\n";
+        }
+    }
+private:
+};
 struct JointVelocities{ 
     std::vector<std::string> names; 
     std::vector<double> velocities; 
@@ -96,12 +110,29 @@ namespace geometry_variables{
             this->z = rhs.z;
             return *this;
         }
+        Point& operator=(const Eigen::VectorXd &rhs)
+        {
+            if (rhs.rows() != 6)
+                return *this;
+            this->x = rhs(0);
+            this->y = rhs(1);
+            this->z = rhs(2);
+            return *this;
+        }
         // Printing
         void print()
         {
             std::cout<< "x: " << x;
             std::cout<< "  y: " << y;
             std::cout<< "  z: " << z << std::endl;
+        }
+        Point abs()
+        {
+            Point ret;
+            ret.x = fabs(this->x);
+            ret.y = fabs(this->y);
+            ret.z = fabs(this->z);
+            return ret;
         }
         // Arithmetic
         Point& operator+=(const Point &a)
@@ -298,11 +329,28 @@ namespace geometry_variables{
             yaw = atan2(2*(q0*q3 + q1*q2),1-2*(q2*q2 + q3*q3));
         }
         PRY() {}
+        PRY& operator=(const Eigen::VectorXd &rhs)
+        {
+            if (rhs.rows() != 6)
+                return *this;
+            this->pitch = rhs(4);
+            this->roll = rhs(3);
+            this->yaw = rhs(5);
+            return *this;
+        }
         void print()
         {
             std::cout << "pitch: " << pitch;
             std::cout << "  roll: " << roll;
             std::cout << "  yaw: " << yaw << std::endl;
+        }
+        PRY abs()
+        {
+            PRY ret;
+            ret.pitch = fabs(this->pitch);
+            ret.roll = fabs(this->roll);
+            ret.yaw = fabs(this->yaw);
+            return ret;
         }
     };
     class PRYPose
@@ -314,17 +362,52 @@ namespace geometry_variables{
             position(Point(a,b,c)), pry(PRY(d,e,f)) {}
         PRYPose(double a) : position(a), pry(a) {}
         PRYPose(Pose a) : position(a.position), pry(a.orientation) {}
+        PRYPose(gm::Pose a) : position(a.position), pry(a.orientation) {}
         PRYPose() : position(0), pry(0) {}
         PRYPose& operator=(const geometry_msgs::Pose &rhs)
         {
             this->position = rhs.position;
             this->pry = PRY(rhs.orientation);
+            std::cout<<"converting gm::pose to prypose\n";
+            return *this;
+        }
+        PRYPose& operator=(const Eigen::VectorXd &rhs)
+        {
+            if (rhs.rows() != 6)
+                return *this;
+            this->position = rhs;
+            this->pry = rhs;
             return *this;
         }
         void print()
         {
             position.print();
             pry.print();
+        }
+        void print(std::string title)
+        {
+            std::cout<<title<<":\n\t";
+            position.print();
+            std::cout<<"\t";
+            pry.print();
+        }
+        PRYPose abs()
+        {
+            PRYPose ret;
+            ret.position = this->position.abs();
+            ret.pry = this->pry.abs();
+            return ret;
+        }
+        operator cv::Mat()
+        {
+            cv::Mat ret(cv::Size(1,6), CV_64F);
+            ret.at<double>(0,0) = this->position.x;
+            ret.at<double>(0,1) = this->position.y;
+            ret.at<double>(0,2) = this->position.z;
+            ret.at<double>(0,3) = this->pry.pitch;
+            ret.at<double>(0,4) = this->pry.roll;
+            ret.at<double>(0,5) = this->pry.yaw;
+            return ret;
         }
     };
 
@@ -435,9 +518,25 @@ namespace geometry_variables{
     PRY operator-(const PRY &a, const PRY &b)
     {
         PRY ret;
-        ret.pitch = a.pitch - b.pitch;
-        ret.roll = a.roll - b.roll;
-        ret.yaw = a.yaw - b.yaw;
+        ret.pitch = fmod(a.pitch - b.pitch, PI);
+        ret.roll = fmod(a.roll - b.roll, PI);
+        ret.yaw = fmod(a.yaw - b.yaw, PI);
+        return ret;
+    }
+    PRY operator*(const PRY&a, const double b)
+    {
+        PRY ret;
+        ret.pitch = a.pitch*b;
+        ret.roll = a.roll*b;
+        ret.yaw = a.yaw*b;
+        return ret;
+    }
+    PRY operator/(const PRY&a, const double b)
+    {
+        PRY ret;
+        ret.pitch = a.pitch/b;
+        ret.roll = a.roll/b;
+        ret.yaw = a.yaw/b;
         return ret;
     }
     bool operator==(const PRY &a, const PRY &b)
@@ -446,6 +545,20 @@ namespace geometry_variables{
         ret = ret && (a.pitch == b.pitch);
         ret = ret && (a.roll == b.roll);
         ret = ret && (a.yaw == b.yaw);
+    }
+    bool operator<(const PRY &a, const PRY &b)
+    {
+        bool ret = true;
+        ret = ret && (a.pitch < b.pitch);
+        ret = ret && (a.roll < b.roll);
+        ret = ret && (a.yaw < b.yaw);
+    }
+    bool operator>(const PRY &a, const PRY &b)
+    {
+        bool ret = true;
+        ret = ret && (a.pitch > b.pitch);
+        ret = ret && (a.roll > b.roll);
+        ret = ret && (a.yaw > b.yaw);
     }
 
     //  PRYPose Operators  ------------------------------
@@ -463,11 +576,46 @@ namespace geometry_variables{
         ret.pry = a.pry - b.pry;
         return ret;
     }
+    PRYPose operator*(const PRYPose &a, const double b)
+    {
+        PRYPose ret;
+        ret.position = a.position*b;
+        ret.pry = a.pry*b;
+        return ret;
+    }
+    PRYPose operator/(const PRYPose &a, const double b)
+    {
+        PRYPose ret;
+        ret.position = a.position/b;
+        ret.pry = a.pry/b;
+        return ret;
+    }
+//     Eigen::VectorXd& operator=(const Eigen::VectorXd &lhs, const PRYPose &rhs)
+//     {
+//         lhs.resize(6);
+//         lhs << rhs.x, rhs.y, rhs.z, rhs.roll, rhs.pitch, rhs.yaw;
+//         return lhs;
+//     }
     bool operator==(const PRYPose &a, const PRYPose &b)
     {
         bool ret = true;
         ret = ret && (a.position == b.position);
         ret = ret && (a.pry == b.pry);
+        return ret;
+    }
+    bool operator<(const PRYPose &a, const PRYPose &b)
+    {
+        bool ret = true;
+        ret = ret && (a.position < b.position);
+        ret = ret && (a.pry < b.pry);
+        return ret;
+    }
+    bool operator>(const PRYPose &a, const PRYPose &b)
+    {
+        bool ret = true;
+        ret = ret && (a.position > b.position);
+        ret = ret && (a.pry > b.pry);
+        return ret;
     }
 }
 

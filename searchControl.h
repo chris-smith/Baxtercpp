@@ -1,6 +1,6 @@
+#include "baxterLimb.h"
 #include "searchgeometry.h"
 #include "rosCamWrap.h"
-#include "baxterLimb.h"
 
 /*------------------------------------------
  * Positive x direction --> Away from front plate
@@ -28,7 +28,7 @@ class SearchControl
     // Search Geometry should be set and checked to ensure valid choices are made
     
 public:
-    SearchControl(BaxterLimb*, BaxterLimb*, BaxterCamera*); //cam hand, other hand, search cam, control cam
+    SearchControl(BaxterLimb*, BaxterLimb*, BaxterCamera*, BaxterCamera*); //cam hand, other hand, search cam, control cam
     
     //Use this to define geometry
     SearchGeometry geometry;
@@ -43,6 +43,7 @@ public:
         // typically, search would be called in a loop. At that point, you should
         // not perform distinct actions on the limbs/cameras you passed when
         // declaring an instance of this class.
+    void swap_hands();                          // starts to search with other hand
     
     void test_transform(gv::Point, double);
     
@@ -90,6 +91,7 @@ private:
     void _endpoint_control_accurate(gv::Point err);
     void _drop_to_table(gv::PRYPose);
     double _getBlobArea();
+    int _best_gripping_location(std::vector<cv::Point>);
     
     
     //Search variables
@@ -113,11 +115,12 @@ SearchControl::SearchControl()
         You should never see this error message.");
 }
 
-SearchControl::SearchControl(BaxterLimb* a, BaxterLimb* b, BaxterCamera* cam)
+SearchControl::SearchControl(BaxterLimb* a, BaxterLimb* b, BaxterCamera* cam_a, BaxterCamera* cam_b)
 {
     _cam_hand = a;
     _manip_hand = b;
-    _search_cam = cam;
+    _search_cam = cam_a;
+    _control_cam = cam_b;
     _state = 0;
     _reset_loc();
     _reset_roi();
@@ -130,11 +133,22 @@ SearchControl::SearchControl(BaxterLimb* a, BaxterLimb* b, BaxterCamera* cam)
     _predictor.k = 0.5;
 }
 
+void SearchControl::swap_hands()
+{
+    // swap limbs
+    std::swap(_cam_hand, _manip_hand);
+    // swap cameras
+    std::swap(_search_cam, _control_cam);
+    
+}
+
 void SearchControl::search()
 {
     if(!_search_initialized)
         _init_search();
     
+    if (!ros::ok())
+        return;
     std::cout<<"state: ";
     switch(_state)
     {
@@ -201,8 +215,7 @@ void SearchControl::_init_search()
     ros::Duration timeout(10);
     if ( _cam_hand->set_position_quick(pos, timeout) < 0 )
     {
-        ROS_ERROR("Unable to initialize search position. \n Please restart \
-             at new location");
+        ROS_ERROR("Unable to initialize search position");
         _search_initialized = false;
         search(); //to ensure searching doesn't begin
     }
@@ -309,6 +322,11 @@ void SearchControl::_grab_piece()
     _cam_hand->gripper->go_to(0);
     cv::Mat scene = _search_cam->cvImage();
     std::vector<cv::Point> blob = _getBlob(scene);
+    _best_gripping_location(blob);
+    // GRIPPING LOCATION TESTS ONLY
+    _state = 0;
+    return;
+    // END GRIPPING LOCATION TESTS
     cv::RotatedRect rect = cv::minAreaRect(blob);
     cv::Point2f rect_points[4];
     rect.points(rect_points);
@@ -348,8 +366,7 @@ void SearchControl::_grab_piece()
         else{
             rotation = rotation;
             //mult.x = -1;
-        }
-        
+        }   
     }
     std::cout<<"new rotation: " << rotation << std::endl;
     rotation = rotation*PI/180; //to radians
@@ -502,6 +519,52 @@ bool SearchControl::_object()
     cv::waitKey(10);
     return true;
 }
+
+int SearchControl::_best_gripping_location(std::vector<cv::Point> blob)
+{
+    // return a negative number if the hand needs to drop down
+    // positive number if the hand needs to move up
+    int max_height = 0;
+    int min_width = scene_width;
+    double area = cv::contourArea(blob, false);
+    cv::RotatedRect rect = cv::minAreaRect(blob);
+    double rectArea = rect.size.height*rect.size.width;
+    double percentArea = area/rectArea;
+    std::cout<<"Percent Area: " << percentArea<<"\n";
+    if (percentArea > .75)
+    {
+        // the object is fairly square, just grab it at the default location
+        std::cout<<"object is pretty square\n";
+    }
+}
+
+/*bool SearchControl::_on_edge(std::vector<cv::Point> blob)
+{
+    char state = 0;
+    for(int i = 0; i < blob.size(); i++)
+    {
+        if (blob[i].x == 0)
+        {
+            // object on left edge of camera
+            state = 1;
+        }
+        if(blob[i].x == scene_width)
+        {
+            // object on right edge of camera
+            state += 2;
+        }
+        if(blob[i].y == 0)
+        {
+            // object on top edge of camera
+            state += 4;
+        }
+        if(blob[i].y == scene_height)
+        {
+            // object on bottom edge of camera
+            state += 8;
+        }
+    }
+}*/
 
 bool SearchControl::_roi_object()
 {
