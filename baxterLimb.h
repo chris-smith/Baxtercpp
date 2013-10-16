@@ -1,6 +1,17 @@
+#include <Eigen/SVD>
+#include <Eigen/LU>
+#include <kdl/segment.hpp>
+#include <kdl/jacobian.hpp>
+#include <kdl/treejnttojacsolver.hpp>
+#include <kdl_parser/kdl_parser.hpp>
+#include <kdl/chain.hpp>
+#include <kdl/chainjnttojacsolver.hpp>
+#include <kdl/jntarray.hpp>
+
 #include "ros/ros.h"
 #include <iostream>
 #include <string>
+#include <stdio.h>
 #include <sstream>
 #include <baxter_msgs/JointCommandMode.h>
 #include <baxter_msgs/JointPositions.h>
@@ -30,6 +41,9 @@
 
 gv::Quaternion toQuat(gv::PRY);                             //convert pitch, roll, yaw to quaternion
 gv::PRY toPRY(gv::Quaternion);                              //convert quaternion to pitch, roll, yaw
+double toSec(int);
+int toNsec(double);
+
 
 #ifndef VECTOR_MATH
 #define VECTOR_MATH
@@ -56,7 +70,7 @@ std::string joint_ids[numJoints] = {"_s0","_s1","_e0","_e1","_w0","_w1","_w2"};
 class BaxterLimb
 {
 public:
-    BaxterLimb(ros::NodeHandle,std::string,uint);       //node handle, side, buffer size
+    BaxterLimb(KDL::Tree, std::string,uint);       //node handle, side, buffer size
     BaxterLimb(std::string);                            //side
     ~BaxterLimb();
     
@@ -79,8 +93,10 @@ public:
     void set_joint_velocities(JointVelocities);         //moves using velocity controller. Sets mode
     void set_joint_pid(std::string, Gains);             //set _pid gains for joint
     Gains get_joint_pid(std::string joint);             //get _pid value for joint
+    void set_endpoint_pid(Gains);                       //set _endpoint_pid
     void set_allowable_error(std::vector<double>);      //set maximum errors allowed to be considered "there"
     void set_allowable_error(double);                   //set blanket maximum error allowed to be considered "there"
+    gv::PRYPose endpoint_error;                         //allowable error when moving by jacobian
     void set_max_velocity(std::vector<double>);         //set maximum velocity allowed for each joint
     void set_max_velocity(double);                      //set blanket maximum velocity allowed for each joint
     void set_max_acceleration(std::vector<double>);     //set maximum acceleration allowed for each joint
@@ -112,11 +128,19 @@ public:
     
     int endpoint_control(gm::Point); //add point to current endpoint state, sets velocities, exits
     
+    //  Jacobian controller
+    int jacobian_to_position(gv::PRYPose, ros::Duration);
+    void lock_joints(std::vector<int>);                 // lock joints for jacobian solver by number
+    void lock_joints(std::vector<std::string>);         // lock joints for jacobian solver by name                
+    void unlock_joints();                               // unlocks all joints
+    void unlock_joints(std::vector<int>);
+    void unlock_joints(std::vector<std::string>);
+    
     //computes pid. If bool is true, does so for "quick". If false, for "accurate"
     //Receives arguments error, integral, derivative, FAST/SLOW
     std::vector<double> compute_gains(std::vector<double>, std::vector<double>, std::vector<double>, bool);
     bool in_range(std::vector<double>); //exposed version of _in_range. assumes fast
-    
+    bool endpoint_in_range(gv::PRYPose);
 private:
     BaxterLimb();
     bool _set; //true if any subscribers have returned data yet
@@ -135,7 +159,6 @@ private:
     gm::Wrench _cartesian_effort;
     baxter_msgs::JointCommandMode _pub_mode;   
     
-    
     ros::NodeHandle _nh; //node handle used to setup subscriber if one is not provided
     unsigned int _bufferSize; //size of subscriber buffer
     ros::Subscriber _joint_state_sub;
@@ -146,6 +169,15 @@ private:
     unsigned short _state_rate;
     ros::Time _last_state_time;
     
+    // KDL & Eigen
+    bool _kdl_set;              // true if kdl chain has been set from tree
+    Gains _endpoint_pid;
+    std::vector<bool> _locked_joints;
+    Eigen::VectorXd _eigen_endpoint; 
+    KDL::Chain _chain;
+    KDL::Jacobian _jacobian;
+    KDL::ChainJntToJacSolver *_jacobian_solver;
+    
     void _set_names(); //sets _joint_names in constructor
     void _on_endpoint_states(const baxter_msgs::EndpointState::ConstPtr&); //callback for /robot/joint_states
     void _on_joint_states(const sensor_msgs::JointState::ConstPtr&); //callback for /endpoint_state
@@ -154,6 +186,7 @@ private:
     void _limit_acceleration(std::vector<double>&, std::vector<double>, double); //ensures velocity not changing too fast
     
     const char* _max_error(std::vector<double>); //returns joint name and error of largest error
+    
 };
 
 
@@ -162,17 +195,20 @@ BaxterLimb::BaxterLimb()
     ROS_ERROR("Private Default Constructor -- Should never be called");
 }
 
-BaxterLimb::BaxterLimb(ros::NodeHandle nh,std::string name,uint bufferSize)
+BaxterLimb::BaxterLimb(KDL::Tree tree,std::string name,uint bufferSize)
 {
     _name = name;
     _bufferSize = bufferSize;
-    _nh = nh;
+    _kdl_set = true;
+    std::string endpoint = name + "_gripper";
+    tree.getChain("torso", endpoint, _chain);
     Init();
 }
 
 BaxterLimb::BaxterLimb(std::string name)
 {
     _name = name;
+    _kdl_set = false;
     _bufferSize = 1;
     Init();
 }
@@ -180,6 +216,7 @@ BaxterLimb::BaxterLimb(std::string name)
 BaxterLimb::~BaxterLimb()
 {
     delete gripper;
+    delete _jacobian_solver;
 }
 
 void BaxterLimb::Init()
@@ -201,10 +238,223 @@ void BaxterLimb::Init()
     _pub_joint_mode = _nh.advertise<baxter_msgs::JointCommandMode>(topic+"/joint_command_mode", 10);
     _pub_joint_position = _nh.advertise<baxter_msgs::JointPositions>(topic+"/command_joint_angles",10);
     _pub_joint_velocity = _nh.advertise<baxter_msgs::JointVelocities>(topic+"/command_joint_velocities",10);
-    
-    
     gripper = new BaxterGripper(_name);
     gripper->calibrate();
+    if (_kdl_set)
+    {
+        int chain_joints = _chain.getNrOfJoints();
+        if (chain_joints != numJoints)
+        {
+            ROS_ERROR("The number of joints in the kinematic chain is incorrect. \
+             [%d] were expected, only [%d] were supplied.", numJoints, chain_joints);
+            _kdl_set = false;
+            return;
+        }
+        for(int j = 0; j < numJoints; j++)
+            _locked_joints.push_back(false);
+        _eigen_endpoint = Eigen::VectorXd(6);
+        _jacobian_solver = new KDL::ChainJntToJacSolver(_chain);
+        endpoint_error = gv::PRYPose(0.01);
+        _endpoint_pid = (Gains){0,0,0};
+    }
+}
+
+void BaxterLimb::lock_joints(std::vector<int> to_lock)
+{
+    std::stringstream ss;
+    for (int i = 0 ; i < _locked_joints.size(); i++)
+    {
+        for(int j = 0; j < to_lock.size(); j++)
+        {
+            if (i == to_lock[j])
+            {
+                ss << i;
+                _locked_joints[i] = true;
+                break;
+            }
+        }
+        if (i != _locked_joints.size() - 1)
+            ss << ", ";
+    }
+    int check = _jacobian_solver->setLockedJoints(_locked_joints);
+    if (check < 0)
+        ROS_ERROR("The Jacobian solver expected a different number of joints \
+            than were supplied for the locking operation");
+    ROS_INFO("Locked joints [%s]", ss.str().c_str());
+}
+
+void BaxterLimb::lock_joints(std::vector<std::string> names)
+{
+    std::stringstream ss;
+    std::vector<std::string> joints = joint_names();
+    for (int i = 0 ; i < names.size(); i++)
+    {
+        for(int j = 0; j < _locked_joints.size(); j++)
+        {
+            if (joints[j] == names[i])
+            {
+                ss << names[i];
+                _locked_joints[j] = true;
+                break;
+            }
+        }
+        if (i != names.size()-1)
+            ss << ", ";
+    }
+    int check = _jacobian_solver->setLockedJoints(_locked_joints);
+    if (check < 0)
+        ROS_ERROR("The Jacobian solver expected a different number of joints \
+            than were supplied for the locking operation");
+    ROS_INFO("Locked joints [%s]", ss.str().c_str());
+}
+
+void BaxterLimb::unlock_joints()
+{
+    std::vector<bool> locked(numJoints, false);
+    _locked_joints = locked;
+    int check = _jacobian_solver->setLockedJoints(_locked_joints);
+    if (check < 0)
+        ROS_ERROR("The Jacobian solver expected a different number of joints \
+            than were supplied for the unlocking operation");
+    ROS_INFO("Unlocked all joints");
+}
+
+void BaxterLimb::unlock_joints(std::vector<int> to_unlock)
+{
+    std::stringstream ss;
+    for (int i = 0; i < to_unlock.size(); i++)
+    {
+        for(int j = 0; j < _locked_joints.size(); j++)
+        {
+            if (j = to_unlock[i])
+            {
+                ss << j;
+                _locked_joints[j] = false;
+                break;
+            }
+        }
+        if ( i != to_unlock.size()-1 )
+            ss << ", ";
+    }
+    int check = _jacobian_solver->setLockedJoints(_locked_joints);
+    if (check < 0)
+        ROS_ERROR("The Jacobian solver expected a different number of joints \
+            than were supplied for the unlocking operation");
+    ROS_INFO("Unlocked joints [%s]", ss.str().c_str());
+}
+void BaxterLimb::unlock_joints(std::vector<std::string> to_unlock)
+{
+    std::stringstream ss;
+    std::vector<std::string> joints = joint_names();
+    for (int i = 0 ; i < to_unlock.size(); i++)
+    {
+        for(int j = 0; j < _locked_joints.size(); j++)
+        {
+            if (joints[j] == to_unlock[i])
+            {
+                ss << to_unlock[j];
+                _locked_joints[j] = false;
+                break;
+            }
+        }
+        if ( i != to_unlock.size()-1 )
+            ss << ", ";
+    }
+    int check = _jacobian_solver->setLockedJoints(_locked_joints);
+    if (check < 0)
+        ROS_ERROR("The Jacobian solver expected a different number of joints \
+            than were supplied for the unlocking operation");
+    ROS_INFO("Unlocked joints [%s]", ss.str().c_str());
+}
+
+void to_vector(const gv::PRYPose &pose, Eigen::VectorXd &vec)
+{
+    vec(0) = pose.position.x;
+    vec(1) = pose.position.y;
+    vec(2) = pose.position.z;
+    vec(3) = pose.pry.roll;
+    vec(4) = pose.pry.pitch;
+    vec(5) = pose.pry.yaw;
+}
+
+int BaxterLimb::jacobian_to_position(gv::PRYPose desired, ros::Duration timeout)
+{
+    //std::cout<<"accurate"<<"\n";
+    double hz = 100;
+    ros::Time start  = ros::Time::now();
+    ros::Time last = ros::Time::now();
+    ros::Rate r(hz); 
+    ros::Duration dt;
+    /*std::vector<double> position;
+    std::vector<double> current = joint_angles();
+    std::vector<double> error = v_difference(current, position);
+    std::vector<double> previous_error(position.size(),0);
+    std::vector<double> integral(position.size(),0);
+    std::vector<double> derivative(position.size(),0);
+    std::vector<double> last_vel = joint_velocities();
+    std::vector<double> accel(position.size(),0);*/
+    gv::PRYPose current = endpoint_pose();
+    gv::PRYPose error = current - desired;
+    gv::PRYPose previous_error = error;
+    gv::PRYPose summation(0);
+    gv::PRYPose integral(0);
+    gv::PRYPose derivative(0);
+    KDL::JntArray jointpositions(7);
+    Eigen::VectorXd x(7);       // joint velocities
+    Eigen::VectorXd last_vel(7);
+    Eigen::VectorXd b(6);       // endpoint error
+    
+    JointVelocities output;
+    //output.names = desired.names;
+    
+    while( !endpoint_in_range(error) && ( ros::Time::now() - start < timeout ) && ros::ok())
+    {
+        dt = ros::Time::now() - last;
+        dt.nsec = (toSec(dt.nsec) < 1/hz ? toNsec(1/hz) : dt.nsec);
+        last = ros::Time::now();
+        //  Get current jacobian
+        _jacobian_solver->JntToJac(jointpositions, _jacobian);
+        Eigen::JacobiSVD<Eigen::MatrixXd> svdOfA(_jacobian.data, Eigen::ComputeThinU | Eigen::ComputeThinV);
+        //  Set endpoint error, sum PID components
+        error = current - desired;
+        integral = integral + error*toSec(dt.nsec);
+        derivative = (error - previous_error)/toSec(dt.nsec);
+        summation = error*_endpoint_pid.kp + integral*_endpoint_pid.ki \
+            + derivative*_endpoint_pid.kd;
+        to_vector(summation,b);
+        //  Solve jacobian for joint velocity outputs, limit accordingly
+        x = svdOfA.solve(b);
+        //  Set velocities
+        
+        //_limit_acceleration(output.velocities, last_vel, toSec(dt.nsec));
+        set_joint_velocities(output);
+        
+        last_vel = x;
+        //previous_error = error;        
+        
+        ros::spinOnce();
+        r.sleep();
+    }
+    //std::cout << "\nOperating time: ";
+    //std::cout << ros::Time::now() - start << std::endl;
+    if(endpoint_in_range(error))
+        return 1;
+    
+    ROS_ERROR("Timeout: jacobian to position");
+    return -1;
+}
+
+bool BaxterLimb::endpoint_in_range(gv::PRYPose current)
+{
+    current = current.abs();
+    bool ret = true;
+    ret = ret && current.position.x < endpoint_error.position.x;
+    ret = ret && current.position.y < endpoint_error.position.y;
+    ret = ret && current.position.z < endpoint_error.position.z;
+    ret = ret && current.pry.pitch < endpoint_error.pry.pitch;
+    ret = ret && current.pry.roll < endpoint_error.pry.roll;
+    ret = ret && current.pry.yaw < endpoint_error.pry.yaw;
+    return ret;
 }
 
 void BaxterLimb::_set_names()
@@ -406,6 +656,10 @@ Gains BaxterLimb::get_joint_pid(std::string name)
     return _pid[i];
 }
 
+void BaxterLimb::set_endpoint_pid(Gains gain)
+{
+    _endpoint_pid = gain;
+}
 
 bool BaxterLimb::in_range(std::vector<double> error)
 {
@@ -695,7 +949,7 @@ int BaxterLimb::quickly_to_position(JointPositions desired, ros::Duration timeou
 
 int BaxterLimb::accurate_to_position(JointPositions desired, ros::Duration timeout)
 {
-    std::cout<<"accurate"<<"\n";
+    //std::cout<<"accurate"<<"\n";
     double hz = 100;
     ros::Time start  = ros::Time::now();
     ros::Time last = ros::Time::now();
@@ -732,8 +986,8 @@ int BaxterLimb::accurate_to_position(JointPositions desired, ros::Duration timeo
         ros::spinOnce();
         r.sleep();
     }
-    std::cout << "\nOperating time: ";
-    std::cout << ros::Time::now() - start << std::endl;
+    //std::cout << "\nOperating time: ";
+    //std::cout << ros::Time::now() - start << std::endl;
     if(_in_range(error, SLOW))
         return 1;
     
