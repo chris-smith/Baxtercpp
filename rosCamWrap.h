@@ -18,7 +18,16 @@ namespace enc = sensor_msgs::image_encodings;
 
 cv::Mat scene;
 cv::Mat templ;
-void surfTest();
+
+#ifndef BAXTER_CAMERA_H
+#define BAXTER_CAMERA_H
+
+struct Resolution
+{
+    uint width;
+    uint height;
+    Resolution(uint a, uint b) : width(a), height(b) {}
+};
 
 class BaxterCamera
 {
@@ -43,14 +52,19 @@ public:
     unsigned char is_bigendian();
     std::vector<unsigned char> data();
     std::string name();
+    Resolution resolution();
     
     //returns the entire ROS image message
     sensor_msgs::Image image();
     
     void display();        // _show = true
     void display(bool);    // sets _show to true || false
-    void TimerCallback(const ros::TimerEvent &);  // custom timer callback for this object. Edit as required
+    //void TimerCallback(const ros::TimerEvent &);  // custom timer callback for this object. Edit as required
     
+    std::vector<std::string> list_cameras();
+    int close();
+    int open(Resolution);
+    int resize(Resolution);               //closes then opens the camera with resolution
     /*returns an opencv formatted image
     *   Check that image exists before working with it
     *           Mat image = cam.cvImage();
@@ -179,6 +193,44 @@ cv::Mat BaxterCamera::cvImage()
     return cv_ptr->image;
 }
 
+std::vector<std::string> BaxterCamera::list_cameras()
+{
+    std::string serv = "/cameras/list";
+    ros::ServiceClient client = _nh.serviceClient<baxter_msgs::ListCameras>(serv);
+    baxter_msgs::ListCameras srv;
+    if(client.call(srv))
+        return srv.response.cameras;
+}
+
+int BaxterCamera::close()
+{
+    std::string serv = "/cameras/close";
+    ros::ServiceClient client = _nh.serviceClient<baxter_msgs::CloseCamera>(serv);
+    baxter_msgs::CloseCamera srv;
+    srv.request.name = _name;
+    if(client.call(srv))
+        return srv.response.err;
+}
+
+int BaxterCamera::open(Resolution res)
+{
+    std::string serv = "/cameras/open";
+    ros::ServiceClient client = _nh.serviceClient<baxter_msgs::OpenCamera>(serv);
+    baxter_msgs::OpenCamera srv;
+    srv.request.name = _name;
+    srv.request.settings.width = res.width;
+    srv.request.settings.height = res.height;
+    if(client.call(srv))
+        return srv.response.err;
+    
+}
+
+int BaxterCamera::resize(Resolution res)
+{
+    this->close();
+    return this->open(res);
+}
+
 void BaxterCamera::display()
 {
     _show = true;
@@ -188,6 +240,11 @@ void BaxterCamera::display(bool show)
 {
     _show = show;
     //std::cout<<"will display image"<<std::endl;
+}
+
+Resolution BaxterCamera::resolution()
+{
+    return Resolution(_img.width,_img.height);
 }
 
 sensor_msgs::Image BaxterCamera::image()
@@ -232,7 +289,7 @@ std::string BaxterCamera::name()
     return _name;
 }
 
-void BaxterCamera::TimerCallback(const ros::TimerEvent &e)
+/*void BaxterCamera::TimerCallback(const ros::TimerEvent &e)
 {
     //--------------Put your code here--------------//
     std::string impath = "/home/ceeostud2/Pictures/";
@@ -240,8 +297,9 @@ void BaxterCamera::TimerCallback(const ros::TimerEvent &e)
     cv::resize(templ, templ, cv::Size(), 0.1, 0.1, cv::INTER_LINEAR);
     scene = cvImage();
     surfTest();
-}
+}*/
 
+#endif
 
 /*----------------------------------------------------------------------
  * Everything after this line is not a part of the BaxterCamera Class

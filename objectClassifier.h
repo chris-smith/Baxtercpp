@@ -4,10 +4,14 @@
 #include <dirent.h>
 #include <sstream>
 
+#define OBJ_CLS_DO_NOT_LOAD false
+
 class ObjectClassifier
 {
 public:
-    ObjectClassifier(std::string);      // provide path to db images
+    ObjectClassifier(std::string);              // provide path to db images
+    ObjectClassifier(std::string, bool);        // load images into db?
+    ObjectClassifier(std::string, int);         // _min_hessian
     
     void scene(const cv::Mat&);       //set the image to search through
     void match();
@@ -25,6 +29,7 @@ private:
     std::vector<cv::Mat> _db_descriptors;
     cv::Mat _query_descriptors;
     cv::FlannBasedMatcher _flannMatcher;
+    int _min_hessian;
     std::vector<cv::DMatch> _matches;
     std::vector<std::string> _valid_types;      // valid image file types to be placed in db
     std::string _dir_path;
@@ -45,12 +50,40 @@ private:
 
 ObjectClassifier::ObjectClassifier(std::string path)
 {
+    std::cout<<"OpenCV Version: "<<CV_VERSION<<"\n";
+    std::cout<<"--------------------------\n";
+    _min_hessian = 300;
     _db_images.clear();
     _valid_path = false;
     _set_valid_types();
     _check_path(path);
     _load_images();
     _train_matcher();
+}
+
+ObjectClassifier::ObjectClassifier(std::string path, int min_hessian)
+{
+    std::cout<<"OpenCV Version: "<<CV_VERSION<<"\n";
+    std::cout<<"--------------------------\n";
+    _min_hessian = min_hessian;
+    _db_images.clear();
+    _valid_path = false;
+    _set_valid_types();
+    _check_path(path);
+    _load_images();
+    _train_matcher();
+}
+
+ObjectClassifier::ObjectClassifier(std::string path, bool load)
+{
+    _db_images.clear();
+    _valid_path = false;
+    _set_valid_types();
+    _check_path(path);
+    if (load){
+        _load_images();
+        _train_matcher();
+    }
 }
 
 void ObjectClassifier::_set_valid_types()
@@ -120,8 +153,8 @@ void ObjectClassifier::_load_images()
         if (_dir_path.find_last_of("/") != _dir_path.size()-1)
             _dir_path += '/';
         temp = cv::imread(_dir_path+file_name);
-        cv::imshow("loading image", temp);
-        cv::waitKey(500);
+        //cv::imshow("loading image", temp);
+        //cv::waitKey(500);
         _db_images.push_back(temp);
         _db_names.push_back(file_name);
     }
@@ -132,7 +165,7 @@ void ObjectClassifier::_load_images()
 void ObjectClassifier::scene(const cv::Mat& scene)
 {
     _scene = scene;
-    cv::SurfFeatureDetector _detector(400);
+    cv::SurfFeatureDetector _detector(_min_hessian);
     cv::SurfDescriptorExtractor _extractor;
     _detector.detect(_scene, _query_keypoints);
     _extractor.compute(_scene, _query_keypoints, _query_descriptors);
@@ -142,7 +175,7 @@ void ObjectClassifier::scene(const cv::Mat& scene)
 
 void ObjectClassifier::_train_matcher()
 {
-    cv::SurfFeatureDetector _detector(400);
+    cv::SurfFeatureDetector _detector(_min_hessian);
     cv::SurfDescriptorExtractor _extractor;
     std::cout<<"Detecting keypoints...\n";
     _detector.detect(_db_images, _db_keypoints);
@@ -168,29 +201,42 @@ void ObjectClassifier::match()
     else{
         _flannMatcher.match(_query_descriptors, _matches);
         std::vector<cv::DMatch> good_matches; //distance should be less than .5???
-        std::vector<cv::Mat> match_imgs;
+        cv::Mat match_img;
         std::vector<uint> _num_matches(_db_images.size(), 0);
         std::stringstream window("match");
         //<< "match ";
+        double max_dist = 0; double min_dist = 100;
         for(int i = 0; i < _matches.size(); i++)
         {
-//             std::cout<<"Match "<<i<<"\n\tqueryIdx: "<<_matches[i].queryIdx<<"\n\t";
-//             std::cout<<"trainIdx: "<<_matches[i].trainIdx<<"\n\timgIdx: ";
-//             std::cout<<_matches[i].imgIdx<<"\n\tdistance: "<<_matches[i].distance<<"\n";
-            if (_matches[i].distance < 0.5)
-                _num_matches[_matches[i].imgIdx]++;
-    //         window << i ;
-    //         cv::namedWindow(window.str(), CV_WINDOW_AUTOSIZE);
-    //         cv::drawMatches(_db_images[i], _db_keypoints[i], _scene, _query_keypoints,
-    //                         _matches, match_imgs[i], cv::Scalar::all(-1), cv::Scalar::all(-1),
-    //                         std::vector<char>(), cv::DrawMatchesFlags::NOT_DRAW_SINGLE_POINTS);
-    //         cv::imshow(window.str(), match_imgs[i]);
+            double dist = _matches[i].distance;
+            if (dist < min_dist) min_dist = dist;
+            if (dist > max_dist) max_dist = dist;
+        }
+        for(int i = 0; i < _matches.size(); i++)
+        {
+            if(_matches[i].distance < 3*min_dist)
+                good_matches.push_back(_matches[i]);
+        }
+        std::cout<<"Total number of matches: "<<good_matches.size()<<"\n";
+        for(int i = 0; i < good_matches.size(); i++)
+        {
+            //std::cout<<"Match "<<i<<"\n\tqueryIdx: "<<window[i].queryIdx<<"\n\t";
+            //std::cout<<"trainIdx: "<<window[i].trainIdx<<"\n\timgIdx: ";
+            //std::cout<<window[i].imgIdx<<"\n\tdistance: "<<window[i].distance<<"\n";
+            //if (_matches[i].distance < 0.5)
+            _num_matches[good_matches[i].imgIdx]++;
+            /*cv::namedWindow(window.str(), CV_WINDOW_AUTOSIZE);
+            cv::drawMatches(_db_images[i], _db_keypoints[i], _scene, _query_keypoints,
+                            good_matches, match_img, cv::Scalar::all(-1), cv::Scalar::all(-1),
+                            std::vector<char>(), cv::DrawMatchesFlags::NOT_DRAW_SINGLE_POINTS);
+            cv::imshow(window.str(), match_img);
+            cv::waitKey(1000);*/
         }
         std::cout<<"\nNumber of matches";
         maxIndex = _num_matches.size();
         for(int i = 0; i < _num_matches.size(); i++)
         {
-            std::cout<<"\n\tDB Image "<<i<<": "<<_num_matches[i];
+            std::cout<<"\n\t"<<_db_names[i]<<": "<<_num_matches[i];
             if(_num_matches[i] > max)
             {
                 max = _num_matches[i];
@@ -198,13 +244,18 @@ void ObjectClassifier::match()
             }
         }
     }
-    if (max < 12)
-        _save_image();   
+    if (max < 2)
+        ;//_save_image();   
     else{
-        std::cout<<"\nI think this piece matches with db image "<<maxIndex<<"\n";
-        cv::imshow("Matching image",_db_images[maxIndex]);
-        cv::waitKey(1000);
-        cv::destroyWindow("Matching image");
+        cv::Mat temp;
+        std::cout<<"\nI think this piece matches with "<<_db_names[maxIndex]<<"\n";
+        //cv::imshow("Matching image",_db_images[maxIndex]);
+        //cv::drawMatches(_db_images[maxIndex], _db_keypoints[maxIndex], _scene, _query_keypoints,
+        //                   _matches, temp, cv::Scalar::all(-1), cv::Scalar::all(-1),
+        //                     std::vector<char>(), cv::DrawMatchesFlags::NOT_DRAW_SINGLE_POINTS);
+        //     cv::imshow("Match", temp);
+        //cv::waitKey(1000);
+        //cv::destroyWindow("Match");
     }
     
 }
@@ -270,7 +321,7 @@ void ObjectClassifier::_get_name_for_image()
                 invalid = false;
             else
             {
-                std::cout<<"There is already a file with that name. Would you like to overwrite it?\n";
+                std::cout<<"There is already a file with that name. Would you like to overwrite it? [y/n]\n";
                 std::string yn;
                 std::cin >> yn;
                 std::transform(yn.begin(), yn.end(), yn.begin(), tolower);
@@ -289,7 +340,7 @@ void ObjectClassifier::_get_name_for_image()
         fprintf(stderr, "Exception convertion image to %s format: %s\n", extension.substr(1).c_str(), ex.what());
         return;
     }
-    std::cout<<"File saved!\n";
+    std::cout<<"File saved as "<<file_name<<"!\n";
     
 }
 

@@ -12,13 +12,13 @@
 
 /*    Here are the types defined here
 
-struct Point{ double x; double y; double z; };
-struct Quaternion{ double x; double y; double z; double w; };
-struct Pose{ Point point; Quaternion quaternion; };
-struct Twist{ Point linear; Point angular; };
-struct Wrench{ Point force; Point torque; };
-struct PRY{ double pitch; double roll; double yaw; };
-struct PRYPose{ Point point; PRY pry; };
+class Point{ double x; double y; double z; };
+class Quaternion{ double x; double y; double z; double w; };
+class Pose{ Point point; Quaternion quaternion; };
+class Twist{ Point linear; Point angular; };
+class Wrench{ Point force; Point torque; };
+class PRY{ double pitch; double roll; double yaw; };
+class PRYPose{ Point point; PRY pry; };
 
 /* Define operators for structs *
 *********************************/
@@ -31,7 +31,43 @@ class JointPositions{
 public:
     std::vector<std::string> names; 
     std::vector<double> angles; 
-    
+    JointPositions() {}
+    JointPositions(const Eigen::VectorXd& rhs)
+    {
+        this->angles.clear();
+        for (int i = 0; i < rhs.rows(); i++)
+        {
+            this->angles.push_back(rhs(i));
+        }
+    }
+    JointPositions& operator=(const Eigen::VectorXd& rhs)
+    {
+        if (rhs.rows() != this->angles.size())
+        {
+                ROS_ERROR("Setting angles [length %d] from Eigen vector \
+                of incompatible size [%d]", this->angles.size(), rhs.rows());
+                return *this;
+        }
+        for (int i = 0; i < rhs.rows(); i++)
+        {
+            this->angles[i] = rhs(i);
+        }
+        return *this;
+    }
+    JointPositions& operator+=(const JointPositions &a)
+    {
+        if (this->angles.size() > a.angles.size())
+        {
+            for(int i = 0; i < a.angles.size(); i++)
+                this->angles[i] += a.angles[i];
+        }
+        else
+        {
+            for(int j = 0; j < this->angles.size(); j++)
+                this->angles[j] += a.angles[j];
+        }
+        return *this;
+    }
     void print()
     {
         for (int i = 0; i < names.size(); i++)
@@ -40,11 +76,30 @@ public:
             std::cout<< angles[i] << "\n";
         }
     }
+    double at(std::string joint)
+    {
+        for(int i = 0; i < names.size(); i++)
+        {
+            if (joint == names[i])
+                return angles[i];
+        }
+        ROS_ERROR("The joint [%s] is not a member of this class", joint.c_str());
+        return -PI*2;
+    }
 private:
 };
-struct JointVelocities{ 
+class JointVelocities{ 
+public:
     std::vector<std::string> names; 
     std::vector<double> velocities; 
+    JointVelocities()  {}
+    JointVelocities(std::vector<double> vels)
+    {
+        for (int i = 0; i < vels.size(); i++)
+        {
+            this->velocities.push_back(vels[i]);
+        }
+    }
     JointVelocities& operator*=(const double &a)
     {
         for (int i = 0; i < this->velocities.size(); i++)
@@ -53,6 +108,80 @@ struct JointVelocities{
         }
         return *this;
     }
+    JointVelocities& operator*=(const JointVelocities &rhs)
+    {
+        for (int i = 0; i < this->velocities.size(); i++)
+        {
+            this->velocities[i] *= rhs.velocities[i];
+        }
+        return *this;
+    }
+    const JointVelocities operator*(const JointVelocities& a) const
+    {
+        return JointVelocities(*this) *= a;
+    }
+    JointVelocities& operator=(const JointVelocities& rhs)
+    {
+        this->velocities = rhs.velocities;
+        this->names = rhs.names;
+    }
+    JointVelocities& operator=(const Eigen::VectorXd& rhs)
+    {
+        if (rhs.rows() != this->velocities.size())
+        {
+            ROS_ERROR("Setting velocities [length %d] from Eigen vector \
+            of incompatible size [%d]", this->velocities.size(), rhs.rows());
+            return *this;
+        }
+        for (int i = 0; i < rhs.rows(); i++)
+        {
+            this->velocities[i] = rhs(i);
+        }
+        return *this;
+    }
+    bool operator>(const double& rhs)
+    {
+        bool ret = true;
+        for (int i = 0; i < this->names.size(); i++)
+        {
+            ret = ret && this->velocities[i] <= rhs;
+        }
+        return ret;
+    }
+    bool operator<(const double& rhs)
+    {
+        
+        bool ret = true;
+        for (int i = 0; i < this->names.size(); i++)
+        {
+            ret = ret && this->velocities[i] < rhs;
+        }
+        return ret;
+    }
+    void remove(std::vector<std::string> to_remove)
+    {
+        // removes velocity/name elements provided
+        for (int i = 0; i < to_remove.size(); i++)
+        {
+            for (int j = 0; j < this->velocities.size(); j++)
+            {
+                if (to_remove[i] == this->names[j])
+                {
+                    this->names.erase(this->names.begin() + j);
+                    this->velocities.erase(this->velocities.begin() + j);
+                }
+            }
+        }
+    }
+    void print()
+    {
+        for (int i = 0; i < this->names.size(); i++)
+        {
+            std::cout<< this->names[i] << ": ";
+            std::cout<< this->velocities[i] << "\n";
+        }
+    }
+private:
 };
 bool operator<(const JointVelocities& a, const JointVelocities &b)
 {
@@ -122,6 +251,13 @@ namespace geometry_variables{
         // Printing
         void print()
         {
+            std::cout<< "x: " << x;
+            std::cout<< "  y: " << y;
+            std::cout<< "  z: " << z << std::endl;
+        }
+        void print(std::string title)
+        {
+            std::cout<<title<<":\n\t";
             std::cout<< "x: " << x;
             std::cout<< "  y: " << y;
             std::cout<< "  z: " << z << std::endl;
@@ -240,12 +376,28 @@ namespace geometry_variables{
         ret = ret && (a.z < b.z);
         return ret;
     }
+    bool operator<(const Point &a, const double &b)
+    {
+        bool ret = true;
+        ret = ret && (a.x < b);
+        ret = ret && (a.y < b);
+        ret = ret && (a.z < b);
+        return ret;
+    }
     bool operator>(const Point &a, const Point &b)
     {
         bool ret = true;
         ret = ret && (a.x > b.x);
         ret = ret && (a.y > b.y);
         ret = ret && (a.z > b.z);
+        return ret;
+    }
+    bool operator>(const Point &a, const double &b)
+    {
+        bool ret = true;
+        ret = ret && (a.x > b);
+        ret = ret && (a.y > b);
+        ret = ret && (a.z > b);
         return ret;
     }
     bool operator==(const Point &a, const Point &b)
@@ -338,6 +490,13 @@ namespace geometry_variables{
             this->yaw = rhs(5);
             return *this;
         }
+        PRY& operator+=(const PRY &a)
+        {
+            this->pitch = this->pitch + a.pitch;
+            this->roll = this->roll + a.roll;
+            this->yaw = this->yaw + a.yaw;
+            return *this;
+        }
         void print()
         {
             std::cout << "pitch: " << pitch;
@@ -361,14 +520,23 @@ namespace geometry_variables{
         PRYPose(double a, double b, double c, double d, double e, double f) :
             position(Point(a,b,c)), pry(PRY(d,e,f)) {}
         PRYPose(double a) : position(a), pry(a) {}
-        PRYPose(Pose a) : position(a.position), pry(a.orientation) {}
-        PRYPose(gm::Pose a) : position(a.position), pry(a.orientation) {}
+        PRYPose(const Pose& a) : position(a.position), pry(a.orientation) {}
+        PRYPose(const gm::Pose& a) : position(a.position), pry(a.orientation) {}
+        //PRYPose(PRYPose a) : position(a.position), pry(a.pry) {}
         PRYPose() : position(0), pry(0) {}
+        PRYPose(const Eigen::VectorXd &rhs)
+        {
+            if (rhs.rows() == 6)
+            {
+                this->position = rhs;
+                this->pry = rhs;
+            }
+        }
         PRYPose& operator=(const geometry_msgs::Pose &rhs)
         {
             this->position = rhs.position;
             this->pry = PRY(rhs.orientation);
-            std::cout<<"converting gm::pose to prypose\n";
+            //std::cout<<"converting gm::pose to prypose\n";
             return *this;
         }
         PRYPose& operator=(const Eigen::VectorXd &rhs)
@@ -377,6 +545,12 @@ namespace geometry_variables{
                 return *this;
             this->position = rhs;
             this->pry = rhs;
+            return *this;
+        }
+        PRYPose& operator+=(const PRYPose &a)
+        {
+            this->pry += a.pry;
+            this->position += a.position;
             return *this;
         }
         void print()
@@ -408,6 +582,40 @@ namespace geometry_variables{
             ret.at<double>(0,4) = this->pry.roll;
             ret.at<double>(0,5) = this->pry.yaw;
             return ret;
+        }
+    };
+    class Rotation
+    {
+    public:
+        Eigen::Matrix3d mat;
+        Rotation() {}
+        Rotation(const PRY& pry) 
+        {
+            double thet,gam,phi;
+            thet = pry.pitch;
+            gam = pry.yaw;
+            phi = pry.roll;
+            mat(0,0) = cos(thet)*cos(gam);
+            mat(0,1) = cos(phi)*sin(gam) + sin(phi)*sin(thet)*cos(gam);
+            mat(0,2) = sin(phi)*sin(gam) - cos(phi)*sin(thet)*cos(gam);
+            mat(1,0) = -cos(thet)*sin(gam);
+            mat(1,1) = cos(phi)*cos(gam) - sin(phi)*sin(thet)*sin(gam);
+            mat(1,2) = sin(phi)*cos(gam) + cos(phi)*sin(thet)*sin(gam);
+            mat(2,0) = sin(thet);
+            mat(2,1) = -sin(phi)*cos(thet);
+            mat(2,2) = cos(phi)*cos(thet);
+        }
+        double pitch()
+        {
+            return asin(mat(2,0));
+        }
+        double roll()
+        {
+            return acos(mat(2,2)/cos(pitch()));
+        }
+        double yaw()
+        {
+            return acos(mat(0,0)/cos(pitch()));
         }
     };
 
@@ -518,9 +726,13 @@ namespace geometry_variables{
     PRY operator-(const PRY &a, const PRY &b)
     {
         PRY ret;
-        ret.pitch = fmod(a.pitch - b.pitch, PI);
-        ret.roll = fmod(a.roll - b.roll, PI);
-        ret.yaw = fmod(a.yaw - b.yaw, PI);
+        Rotation aRot(a);
+        Rotation bRot(b);
+        Rotation fin;
+        fin.mat = bRot.mat*aRot.mat.inverse();
+        ret.pitch = fin.pitch();
+        ret.roll = fin.roll();
+        ret.yaw = fin.yaw();
         return ret;
     }
     PRY operator*(const PRY&a, const double b)
