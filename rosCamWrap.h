@@ -236,6 +236,7 @@ int BaxterCamera::_get_control_value(int control_id, int defaul)
 void BaxterCamera::_set_control_value(int control_id, int val)
 {
     int index = -1;
+    //std::cout<<"settings size: "<<_settings.controls.size()<<"\n";
     for(int i = 0; i < _settings.controls.size(); i++)
     {
         if(_settings.controls[i].id == control_id){
@@ -289,29 +290,43 @@ int BaxterCamera::close()
 {
     baxter_msgs::CloseCamera srv;
     srv.request.name = _name;
-    if(_close_client.call(srv))
+    if(this->_close_client.call(srv))
         return srv.response.err;
+    return 1;
 }
 
 int BaxterCamera::open()
 {
     baxter_msgs::OpenCamera srv;
-    srv.request.name = _name;
-    if (_name == "head_camera")
+    srv.request.name = this->_name;
+    if (this->_name == "head_camera")
     {
         this->_set_control_value(CAMERA_CONTROL_FLIP, true);
         this->_set_control_value(CAMERA_CONTROL_MIRROR, true);
     }
-    srv.request.settings = _settings;
-    if(_open_client.call(srv))
+    srv.request.settings = this->_settings;
+    if(this->_open_client.call(srv))
         return srv.response.err;
-    
+    return 1;
 }
 
 int BaxterCamera::_reload()
 {
-    this->close();
-    return this->open();
+    bool close = false;
+    bool open = false;
+    if (this->close() != 0)
+        close = true;
+    if( this->open() != 0)
+        open = true;
+    if (close && open){
+        throw "Unable to reload camera";
+        return 1;
+    }
+    else if(close)
+        throw("Unable to close camera");
+    else if(open)
+        throw("Unable to open camera");
+    return 0;
 }
 
 void BaxterCamera::display()
@@ -462,7 +477,7 @@ void BaxterCamera::window(Resolution res)
 
 bool BaxterCamera::flip()
 {
-    return this->_get_control_value(CAMERA_CONTROL_FLIP, false);
+    return this->_get_control_value(CAMERA_CONTROL_FLIP, true);
 }
 void BaxterCamera::flip(bool val)
 {
@@ -471,7 +486,7 @@ void BaxterCamera::flip(bool val)
 }
 bool BaxterCamera::mirror()
 {
-    return this->_get_control_value(CAMERA_CONTROL_MIRROR, false);
+    return this->_get_control_value(CAMERA_CONTROL_MIRROR, true);
 }
 void BaxterCamera::mirror(bool val)
 {
