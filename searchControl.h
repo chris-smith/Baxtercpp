@@ -97,7 +97,7 @@ private:
     void _drop_to_table_two(gv::PRYPose desired);
     void _lower(double);                                      //  lowers down to table keeping object in center of camera
     double _getBlobArea();
-    int _best_gripping_location(std::vector<cv::Point>);
+    cv::Point2f _best_gripping_location(std::vector<cv::Point>);
     bool _on_edge(std::vector<cv::Point> blob);
     void _remove_grippers();            // finds grippers in test image for removal later
     
@@ -116,6 +116,7 @@ private:
     bool _gripping;
     double _blob_area;
     cv::Mat _gripper_mask;
+    cv::Mat _bgra_gripper_mask;
 };
 
 SearchControl::SearchControl()
@@ -232,18 +233,21 @@ void SearchControl::_init_search()
     geometry.home.position.z = pos.position.z;
     //std::cout<<"height: "<<pos.position.z<<"\n";
     //std::cout<<_search_cam->height()<<" "<<_search_cam->width();    std::cout<<"roll: " << pos.pry.roll <<"\npitch: "<<pos.pry.pitch<<"\nyaw: "<<pos.pry.yaw<<"\n";
-    ros::spinOnce();
-    _remove_grippers();
     ros::Duration timeout(10);
    //   COMMENTED OUT WHILE TESTING IMAGE RECOGNITION
-    /*if ( _cam_hand->set_position_quick(pos, timeout) < 0 )
+    if ( _cam_hand->set_position_quick(pos, timeout) < 0 )
     {
         ROS_ERROR("Unable to initialize search position");
         _search_initialized = false;
         search(); //to ensure searching doesn't begin
-    }*/
+    }
     _cam_hand->set_position(pos.position, timeout);
     _cam_hand->gripper->go_to(100);
+    ros::spinOnce();
+    _remove_grippers();
+    pos.position.x -= .05;
+    pos.position.y -= .05;
+    _cam_hand->set_position(pos.position, timeout);
     _gripping = false;
     _blob_area = 0; 
 }
@@ -252,16 +256,18 @@ void SearchControl::_remove_grippers()
 {
     if (!_object())
         return;
+    _cam_hand->gripper->block = true;
+    _cam_hand->gripper->go_to(100);
     std::vector<cv::Point> blob;
     cv::Mat scene = _search_cam->cvImage();
     if (scene.empty()){
         ROS_ERROR("Empty scene :/");
         _remove_grippers();
     }
-    std::cout<<"scene type "<<scene.type()<<"\n";
+    //std::cout<<"scene type "<<scene.type()<<"\n";
     cv::Mat mask;
     int type = cv::MORPH_ELLIPSE;
-    int sz = 1;
+    int sz = 2;
     cv::Mat element = getStructuringElement( type,
                                              cv::Size(2*sz+1, 2*sz+1),
                                              cv::Point(sz, sz) );
@@ -273,13 +279,13 @@ void SearchControl::_remove_grippers()
         ROS_ERROR("Unable to convert image to greyscale");
         return;
     }
-    std::cout<<"thresh type "<<thresh.type()<<"\n";
-    cv::imshow("pre thresh", thresh);    
-    cv::threshold(thresh, thresh,30,255,cv::THRESH_BINARY_INV); 
-    cv::imshow("pre erosion", thresh);
+    //std::cout<<"thresh type "<<thresh.type()<<"\n";
+    //cv::imshow("pre thresh", thresh);    
+    cv::threshold(thresh, thresh,40,255,cv::THRESH_BINARY_INV); 
+    //cv::imshow("pre erosion", thresh);
     cv::dilate(thresh, mask, element);   
     cv::dilate(mask, mask, element);
-    cv::imshow("post erosion", mask);
+    //cv::imshow("post erosion", mask);
     
     _gripper_mask = mask;
     if(_cam_hand->gripper->state.position > 90)
@@ -287,21 +293,25 @@ void SearchControl::_remove_grippers()
     else
         ROS_INFO("Set mask for closed position");
     
-    std::cout<<"image type "<<mask.type()<<"\n";
+    //std::cout<<"image type "<<mask.type()<<"\n";
     cv::Mat zeros;
-    scene.copyTo(zeros);
-    zeros = zeros & cv::Scalar(0);
-    cv::add(zeros, cv::Scalar(1), zeros, mask);
+//     scene.copyTo(zeros);
+//     zeros = zeros & cv::Scalar(0);
+//     cv::add(zeros, cv::Scalar(255,255,255), zeros, mask);
+//     cv::imshow("zeros", zeros);
     //zeros = cv::bitwise_and(zeros, 0);
-    std::cout<<"zeros type "<<zeros.type()<<"\n";
-    //cv::cvtColor(zeros, bgra_zeros, CV_GRAY2BGRA);
-    std::cout<<"new mask type "<<mask.type()<<"\n";
-    cv::multiply(scene, zeros, scene);
-    cv::imshow("mask subtract", scene);
+    //std::cout<<"zeros type "<<zeros.type()<<"\n";
+    cv::cvtColor(mask, zeros, CV_GRAY2BGRA);
+    cv::imshow("cvt", zeros);
+    _bgra_gripper_mask = zeros;
+    cv::add(zeros, scene, scene);
+    //std::cout<<"new mask type "<<mask.type()<<"\n";
+    //cv::multiply(scene, zeros, scene);
+    cv::imshow("mask add", scene);
     
     cv::waitKey(1000);
     
-    blob = _getBlob(scene);
+    //blob = _getBlob(scene);
 }
 
 void SearchControl::_search()
@@ -417,17 +427,27 @@ void SearchControl::_grab_piece()
     //  _state == 3
     double blobAreaInitial = _getBlobArea();
     _cam_hand->gripper->block = true;
-    _cam_hand->gripper->go_to(0);
-    _lower(geometry.table_height+.02);
     _cam_hand->gripper->go_to(100);
+    std::vector<cv::Point> blob = _getBlob(scene);
+    _lower(geometry.table_height+.01);
+    gv::Point pos;
+    pos = _cam_hand->endpoint_pose().position;
+    pos.z = geometry.table_height-.012;
     ros::Duration tout(5);
+    JointPositions jp = _cam_hand->joint_positions();
+    double w2_ = jp.at("_w2");
+    _cam_hand->set_position(pos, w2_, tout);
+    _cam_hand->gripper->go_to(5);
+    ros::Duration pause(1);
+    pause.sleep();
     _cam_hand->set_position(geometry.home, tout);
+    _cam_hand->gripper->go_to(100);
     _state = 0;
     return;
     float rotation;
     cv::RotatedRect rect;
     cv::Mat scene = _search_cam->cvImage();
-    std::vector<cv::Point> blob = _getBlob(scene);
+    //std::vector<cv::Point> blob = _getBlob(scene);
     //_best_gripping_location(blob); // SHOULD USE cv::CONVEXITYDEFECTS() TO HELP DO THIS
     rect = cv::minAreaRect(blob);
     cv::Point2f rect_points[4];
@@ -609,12 +629,16 @@ void SearchControl::_lower(const double stop_height)
         scene = _search_cam->cvImage();
         blob = _getBlob(scene);
         //_best_gripping_location(blob);
-        centroid = _get_centroid(blob);
+        try{
+        centroid = _best_gripping_location(blob);
+        //centroid = _get_centroid(blob);
         circle(scene, centroid, 10, cv::Scalar(-1), 1, 8);
         error.x = centroid.x - scene_width/2; 
         error.y = centroid.y - scene_height/2;
         error.y /= scene_height;
         error.x /= scene_width; 
+        error.y *= 3;
+        error.print("error");
         rect = cv::minAreaRect(blob);
         cv::Point2f rect_points[4];
         rect.points(rect_points);
@@ -653,6 +677,7 @@ void SearchControl::_lower(const double stop_height)
         double yaw = pose.pry.yaw;
         height = pose.position.z;
         _transform(error, yaw, height-geometry.table_height);
+        error.print("error");
         error.z = 0;
         if(height > stop_height)
             error.z = .02;
@@ -660,6 +685,10 @@ void SearchControl::_lower(const double stop_height)
         _endpoint_control(error, w2); //takes in error, w2 angle
         ros::spinOnce();
         pose = _cam_hand->endpoint_pose();
+        }
+        catch(cv::Exception e){
+            ROS_ERROR(e.what());
+        }
         //error.z = pose.position.z - geometry.table_height;    
     }
     //pose.print();
@@ -737,7 +766,7 @@ bool SearchControl::_object()
     return true;
 }
 
-int SearchControl::_best_gripping_location(std::vector<cv::Point> blob)
+cv::Point2f SearchControl::_best_gripping_location(std::vector<cv::Point> blob)
 {
     // return a negative number if the hand needs to drop down
     // positive number if the hand needs to move up
@@ -752,6 +781,7 @@ int SearchControl::_best_gripping_location(std::vector<cv::Point> blob)
     {
         // the object is fairly square, just grab it at the default location
         std::cout<<"object is pretty square\n";
+        return rect.center;
     }
     std::vector<cv::Vec4i> defects;
     std::vector<int> hull;
@@ -762,7 +792,7 @@ int SearchControl::_best_gripping_location(std::vector<cv::Point> blob)
     {
         std::cout<<"convexity: "<<defects[i].depth<<"\n";
     }
-    return 1;
+    return cv::Point2f();
 }
 
 bool SearchControl::_on_edge(std::vector<cv::Point> blob)
@@ -923,6 +953,22 @@ std::vector<cv::Point> SearchControl::_getBlob(cv::Mat& scene)
         ROS_ERROR("Unable to convert image to greyscale");
         return temp;
     }
+    /*cv::SimpleBlobDetector::Params params;
+    params.minDistBetweenBlobs = 50.0f;
+    params.filterByInertia = false;
+    params.filterByConvexity = false;
+    params.filterByColor = true;
+    params.blobColor = 0;
+    params.filterByCircularity = false;
+    params.filterByArea = true;
+    params.minArea = 100.0f;
+    cv::Ptr<cv::FeatureDetector> blob_detector = new cv::SimpleBlobDetector(params);
+    blob_detector->create("SimpleBlob");
+    std::vector<cv::KeyPoint> keypoints;
+    blob_detector->detect(thresh, keypoints);
+    if(!keypoints.empty())
+        //cv::drawKeypoints(scene, keypoints, scene);
+    //cv::imshow("keypoints", scene);*/
     cv::threshold(thresh, thresh,100,255,cv::THRESH_BINARY_INV);
     thresh = thresh - _gripper_mask;
     int type = cv::MORPH_ELLIPSE;

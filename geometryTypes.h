@@ -27,6 +27,8 @@ namespace gm = geometry_msgs;
 
 #define PI 3.141592653589793238463
 
+std::string JOINT_IDS[7] = {"_s0","_s1","_e0","_e1","_w0","_w1","_w2"};
+
 class JointPositions{ 
 public:
     std::vector<std::string> names; 
@@ -81,6 +83,8 @@ public:
         for(int i = 0; i < names.size(); i++)
         {
             if (joint == names[i])
+                return angles[i];
+            else if(joint == JOINT_IDS[i])
                 return angles[i];
         }
         ROS_ERROR("The joint [%s] is not a member of this class", joint.c_str());
