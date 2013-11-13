@@ -337,7 +337,6 @@ void BaxterCamera::display()
 void BaxterCamera::display(bool show)
 {
     _show = show;
-    //std::cout<<"will display image"<<std::endl;
 }
 
 Resolution BaxterCamera::resolution()
@@ -446,6 +445,15 @@ Resolution BaxterCamera::window()
     else
         return Resolution(x,this->_get_control_value(CAMERA_CONTROL_WINDOW_Y, -1));    
 }
+
+void _coerce(int& val, const int& min, const int& max)
+{
+    if (val > max)
+        val = max;
+    else if (val < min)
+        val = min;
+}
+
 void BaxterCamera::window(Resolution res)
 {
     /*
@@ -465,10 +473,14 @@ void BaxterCamera::window(Resolution res)
     std::stringstream err_x, err_y;
     err_x<<"Max X window is "<<limit_x;
     err_y<<"Max y window is "<<limit_y;
-    if (x < 0 || x > limit_x)
-        throw(std::out_of_range(err_x.str()));
-    if (y < 0 || y > limit_y)
-        throw(std::out_of_range(err_y.str()));
+    if (x < 0 || x > limit_x){
+        ROS_ERROR("Tried to set X window to %d. Coercing value to within range [%d,%d]", x,0,limit_x);
+        _coerce(x,0,limit_x);        
+    }
+    if (y < 0 || y > limit_y){
+        ROS_ERROR("Tried to set Y window to %d. Coercing value to within range [%d,%d]", x,0,limit_y);
+        _coerce(y,0,limit_y);
+    }
     
     this->_set_control_value(CAMERA_CONTROL_WINDOW_X, x);
     this->_set_control_value(CAMERA_CONTROL_WINDOW_Y, y);
@@ -495,7 +507,7 @@ void BaxterCamera::mirror(bool val)
 }
 bool BaxterCamera::half_resolution()
 {
-    return this->_get_control_value(CAMERA_CONTROL_RESOLUTION_HALF, false);
+    return this->_get_control_value(CAMERA_CONTROL_RESOLUTION_HALF, true);
 }
 void BaxterCamera::half_resolution(bool val)
 {
