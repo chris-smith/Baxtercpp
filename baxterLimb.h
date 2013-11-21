@@ -830,6 +830,7 @@ double roll_over(double angle, double limit)
 JointPositions BaxterLimb::get_point_position(gv::Point pt, const double w2)
 {
     double r,phi,z;   
+    pt.print("point position");
     gv::Point offset;
     JointPositions jp;
     jp.angles = joint_angles();
@@ -857,6 +858,7 @@ JointPositions BaxterLimb::get_point_position(gv::Point pt, const double w2)
     l3 = d3+a-d;
     h = z + c;
     r = sqrt(offset.x*offset.x + offset.y*offset.y) - .069;
+    //std::cout<<"r: "<<r<<"  h: "<<h<<"\n";
     diag = sqrt(r*r + h*h);
     phi = atan2(h,r);
     alpha = acos((l3*l3 - diag*diag - l2*l2)/(-2*l2*diag));

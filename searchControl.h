@@ -1,6 +1,7 @@
 #include "baxterLimb.h"
 #include "searchgeometry.h"
 #include "objectClassifier.h"
+#include "nxtKit.h"
 
 /*------------------------------------------
  * Positive x direction --> Away from front plate
@@ -55,6 +56,9 @@ private:
     BaxterCamera* _search_cam;          // used to find objects in scene
     BaxterCamera* _control_cam;         // used to help control positioning of _search_cam
     ObjectClassifier* _classifier;
+    NxtKit* _kit;
+    cv::SimpleBlobDetector* _blob_detector;
+    
     cv::Mat whole_scene;
     
     //State trackers
@@ -74,6 +78,7 @@ private:
     
     //Called by Search Functions
     bool _object();                                      //  looks for an object in _search_cam
+    bool _object(cv::Rect);                              //  looks for object within bounds of rectangle
     bool _roi_object();                                  //  looks for an object in subset of the image
     bool _track_object();
     void _reset_loc();                                   //  sets _obj_loc to (-1,-1)
@@ -89,7 +94,8 @@ private:
     cv::Rect _restrict(std::vector<cv::Point>, double,double);     //  returns rectangle enclosed in size of image
     cv::Rect _getBlobRoi(cv::Point2d pt);
     std::vector<cv::Point> _getBlob(cv::Mat&);            //   return contour of largest blob in image
-     std::vector<cv::Point> _getCentralBlob(cv::Mat&);
+    std::vector<cv::Point> _getBlob(cv::Mat&, cv::Rect);
+    std::vector<cv::Point> _getCentralBlob(cv::Mat&);
     void _endpoint_control(gv::Point);
     void _endpoint_control(gv::Point, double);
     void _endpoint_control_accurate(gv::Point err);
@@ -100,6 +106,7 @@ private:
     cv::Point2f _best_gripping_location(std::vector<cv::Point>);
     bool _on_edge(std::vector<cv::Point> blob);
     void _remove_grippers();            // finds grippers in test image for removal later
+    void _limit_bounds(cv::Rect& bounds);
     
     //Search variables
     cv::Point2d _obj_loc;                                //  location of found object in _object()
@@ -117,6 +124,7 @@ private:
     double _blob_area;
     cv::Mat _gripper_mask;
     cv::Mat _bgra_gripper_mask;
+    std::string _found_piece;
 };
 
 SearchControl::SearchControl()
@@ -152,6 +160,7 @@ SearchControl::~SearchControl()
     delete _search_cam;
     delete _control_cam;*/
     delete _classifier;
+    delete _blob_detector;
 }
 
 void SearchControl::swap_hands()
@@ -170,6 +179,9 @@ void SearchControl::search()
     
     if (!ros::ok())
         return;
+    scene_height = _search_cam->height();
+    scene_width = _search_cam->width();
+    ros::Rate r(20);
     std::cout<<"state: ";
     switch(_state)
     {
@@ -181,7 +193,7 @@ void SearchControl::search()
             break;
         case 1:
             //  Found something, move over
-            //  obj in bounds ? move over, _state = 2 : state = 0
+            //  obj in bounds ? _state = 2 : state = 0
             std::cout<<"1";
             _tracking = true;
             _move_to_piece();
@@ -214,11 +226,26 @@ void SearchControl::search()
     ros::spinOnce();
 }
 
+cv::SimpleBlobDetector::Params _blob_params()
+{
+    cv::SimpleBlobDetector::Params params;
+    params.minDistBetweenBlobs = 50.0f;
+    params.filterByInertia = false;
+    params.filterByConvexity = false;
+    params.filterByColor = false;
+    params.blobColor = 20;
+    params.filterByCircularity = false;
+    params.filterByArea = true;
+    params.minArea = 10.0f;
+    params.maxArea = 500.0f;
+    return params;
+}
+
 void SearchControl::_init_search()
 {
     _search_initialized = true;
     _state = 0;
-    allowable_error = gv::Point(5,5,1); // need the 1 so err < allow is true
+    allowable_error = gv::Point(10,10,1); // need the 1 so err < allow is true
     if (geometry.home == gv::PRYPose(0))
     {
         gm::Pose pose = _cam_hand->endpoint_pose();
@@ -235,16 +262,30 @@ void SearchControl::_init_search()
     //std::cout<<_search_cam->height()<<" "<<_search_cam->width();    std::cout<<"roll: " << pos.pry.roll <<"\npitch: "<<pos.pry.pitch<<"\nyaw: "<<pos.pry.yaw<<"\n";
     ros::Duration timeout(10);
    //   COMMENTED OUT WHILE TESTING IMAGE RECOGNITION
-    if ( _cam_hand->set_position_quick(pos, timeout) < 0 )
-    {
-        ROS_ERROR("Unable to initialize search position");
-        _search_initialized = false;
-        search(); //to ensure searching doesn't begin
-    }
+//     if ( _cam_hand->set_position_quick(pos, timeout) < 0 )
+//     {
+//         ROS_ERROR("Unable to initialize search position");
+//         _search_initialized = false;
+//         search(); //to ensure searching doesn't begin
+//     }
+    pos.print("Starting Position");
     _cam_hand->set_position(pos.position, timeout);
     _cam_hand->gripper->go_to(100);
     ros::spinOnce();
     _remove_grippers();
+    _blob_detector = new cv::SimpleBlobDetector();
+    //_blob_detector->create("SimpleBlob");
+    /*
+ *  x: -0.22869011299
+    y: -0.714390159574
+    z: -0.0736401235418
+    
+    x: -0.37282466562
+    y: -0.514911105068
+    z: -0.0697321340386
+    */
+    cv::RotatedRect nxtkit(cv::Point2f(-.22869,-.71439),cv::Size2f(.38,.27),-54.15);
+    _kit = new NxtKit(nxtkit,-.065);
     pos.position.x -= .05;
     pos.position.y -= .05;
     _cam_hand->set_position(pos.position, timeout);
@@ -302,7 +343,7 @@ void SearchControl::_remove_grippers()
     //zeros = cv::bitwise_and(zeros, 0);
     //std::cout<<"zeros type "<<zeros.type()<<"\n";
     cv::cvtColor(mask, zeros, CV_GRAY2BGRA);
-    cv::imshow("cvt", zeros);
+    //cv::imshow("cvt", zeros);
     _bgra_gripper_mask = zeros;
     cv::add(zeros, scene, scene);
     //std::cout<<"new mask type "<<mask.type()<<"\n";
@@ -321,22 +362,42 @@ void SearchControl::_search()
         _state = 1;
     else{
         ros::Duration timeout(5);
-        _cam_hand->set_position_quick(geometry.home, timeout);
+        //_cam_hand->set_position_quick(geometry.home, timeout);
         _cam_hand->set_position(geometry.home.position, timeout*0.5);
     }
     
+}
+
+void SearchControl::_limit_bounds(cv::Rect& bounds)
+{
+    if (bounds.x < 0)
+        bounds.x = 0;
+    if (bounds.y < 0)
+        bounds.y = 0;
+    if (bounds.x + bounds.width > scene_width)
+        bounds.width = scene_width - bounds.x;
+    if (bounds.y + bounds.height > scene_height)
+        bounds.height = scene_height - bounds.y;
 }
     
 void SearchControl::_move_to_piece()
 {
     //  _state == 1
+    /*cv::Rect search_bounds = _rotated_rect.boundingRect();
+    search_bounds += cv::Size(30,30);
+    _limit_bounds(search_bounds);
+    /*if (!_object(search_bounds))
+    {
+        ROS_INFO("Lost object");
+        _state = 0;
+        return;
+    }*/
     gv::Point err; //difference between centroid of object and center of image;
     err.x = _obj_loc.x - scene_width/2; 
     err.y = _obj_loc.y - scene_height/2;
-//     err.print();
     gv::Point temp = abs(err);
-    //temp.print();
-    //allowable_error.print();
+//     temp.print("current error");
+//     allowable_error.print("allowable error");
     double scene_area = scene_height*scene_width;
     double obj_area = _bounding_rect.height*_bounding_rect.width;
     double ratio = obj_area/scene_area;
@@ -350,16 +411,20 @@ void SearchControl::_move_to_piece()
     // pixels -> pixels/pixel
     err.y /= scene_height;
     err.x /= scene_width; 
+    //err.print("Non dimensionalized error");
     double rotation = _rotated_rect.angle; //this is in DEGREES
     if (_rotated_rect.size.width < _rotated_rect.size.height){
         rotation = 90 - rotation;
     }
-    
+    ros::spinOnce();
     gm::Pose pos = _cam_hand->endpoint_pose();
     //gm::Quaternion quat = pos.orientation;
     gv::Quaternion orient = pos.orientation;
     double yaw = toPRY(orient).yaw;
-    _transform(err, yaw);
+    double height = pos.position.z;
+    //std::cout<<"yaw: "<<yaw<<"\n";
+    _transform(err, yaw, height-geometry.table_height);
+    //err.print("Distance error");
     //err.z = 0.005;
     /*std::cout<<"y position: " << _obj_loc.y;
     std::cout<<"  y error: " << err.y << "\n";
@@ -384,7 +449,7 @@ void SearchControl::_move_to_piece()
 void SearchControl::_verify_piece()
 {
     //  _state == 2
-    Resolution orig = _search_cam->resolution();
+    /*Resolution orig = _search_cam->resolution();
     Resolution ver(480,300);
     //_search_cam->resize(ver);
     _lower(geometry.table_height+.08);
@@ -395,7 +460,9 @@ void SearchControl::_verify_piece()
     _classifier->scene(scene);
     _classifier->match();
     //_search_cam->resize(orig);
-    cv::waitKey(500);
+    cv::waitKey(500);*/
+    std::cout<<"What piece is this?\n";
+    std::cin>>_found_piece;
     _state = 3; // Ignore validation for now, go straight to picking up
 }
 
@@ -432,17 +499,21 @@ void SearchControl::_grab_piece()
     _lower(geometry.table_height+.01);
     gv::Point pos;
     pos = _cam_hand->endpoint_pose().position;
-    pos.z = geometry.table_height-.012;
+    pos.z = geometry.table_height;//-.012;
     ros::Duration tout(5);
     JointPositions jp = _cam_hand->joint_positions();
     double w2_ = jp.at("_w2");
+    std::cout<<"Final drop to height "<<pos.z<<"\n";
     _cam_hand->set_position(pos, w2_, tout);
     _cam_hand->gripper->go_to(5);
     ros::Duration pause(1);
     pause.sleep();
+    bool gripped = _cam_hand->gripper->state.gripping;
+    if (gripped)
+        ROS_INFO("GRABBED PIECE CORRECTLY");
     _cam_hand->set_position(geometry.home, tout);
     _cam_hand->gripper->go_to(100);
-    _state = 0;
+    _state = 4;
     return;
     float rotation;
     cv::RotatedRect rect;
@@ -574,9 +645,20 @@ void SearchControl::_deposit_piece()
         _state = 0;
         return;
     }
+    cv::RotatedRect container = _kit->get_coordinates(_found_piece);
+    if(container.size == cv::Size2f(-1,-1)){
+        ROS_ERROR("The piece [%s] does not exist in this kit", _found_piece.c_str());
+        _state = 0;
+        return;
+    }
     _cam_hand->gripper->block = true;
+    //cv::Point dropoff_pt = container.center;
     gv::PRYPose dropoff;
-    dropoff.position = gv::Point(-.15, -.95, .4);
+    dropoff.position = container.center;
+    dropoff.position.print("Deposit location");
+    _state = 0;
+    return;
+    dropoff.position.z = _kit->height() + .005;
     dropoff.pry = gv::PRY(0, 3.14, 1.57);
     ros::Duration timeout(5);
     int moved = _cam_hand->set_position_quick(dropoff, timeout);
@@ -630,61 +712,62 @@ void SearchControl::_lower(const double stop_height)
         blob = _getBlob(scene);
         //_best_gripping_location(blob);
         try{
-        centroid = _best_gripping_location(blob);
-        //centroid = _get_centroid(blob);
-        circle(scene, centroid, 10, cv::Scalar(-1), 1, 8);
-        error.x = centroid.x - scene_width/2; 
-        error.y = centroid.y - scene_height/2;
-        error.y /= scene_height;
-        error.x /= scene_width; 
-        error.y *= 3;
-        error.print("error");
-        rect = cv::minAreaRect(blob);
-        cv::Point2f rect_points[4];
-        rect.points(rect_points);
-        for(int j = 0; j < 4; j++)
-        {
-            line(scene, rect_points[j], rect_points[(j+1)%4], cv::Scalar(255,0,0),1,8);
-        }
-        cv::imshow("Rotated Rectangle", scene);
-        cv::waitKey(10);
-        // THE ROTATION ANGLE IS ALWAYS NEGATIVE
-        rotation = rect.angle; //this is in DEGREES
-        //std::cout<<"rotation: "<<rotation<<"\n";
-        // OBJECT HEIGHT IS GREATER THAN WIDTH
-        // FOR OBJECTS THAT LOOK LIKE  \ \
-        //                             \_\
-        //
-        // OBJECT WIDTH IS GREATER THAN HEIGHT
-        // FOR OBJECTS THAT LOOK LIKE /  /
-        //                           /__/
-        //std::cout<<"rectangle size\n\tx: " << rect.size.width <<"\n\ty: " << rect.size.height;
-        if (rotation < 45)
-        {
-            if (rect.size.width > rect.size.height)
-                rotation = 90 + rotation;
-        }
-        else
-        {   
-            if (rect.size.width > rect.size.height)
-                rotation = -( 90 - rotation );
-        }
-        rotation = rotation*PI/180; //to radians
-        ros::spinOnce();
-        pose = _cam_hand->endpoint_pose();
-        jp = _cam_hand->joint_positions();
-        w2 = jp.at("right_w2") + rotation;
-        double yaw = pose.pry.yaw;
-        height = pose.position.z;
-        _transform(error, yaw, height-geometry.table_height);
-        error.print("error");
-        error.z = 0;
-        if(height > stop_height)
-            error.z = .02;
-        //std::cout<<"rotation: "<<rotation<<"\n";
-        _endpoint_control(error, w2); //takes in error, w2 angle
-        ros::spinOnce();
-        pose = _cam_hand->endpoint_pose();
+            if(!blob.empty())
+                centroid = _best_gripping_location(blob);
+            //centroid = _get_centroid(blob);
+            circle(scene, centroid, 10, cv::Scalar(-1), 1, 8);
+            error.x = centroid.x - scene_width/2; 
+            error.y = centroid.y - scene_height/2;
+            error.y /= scene_height;
+            error.x /= scene_width; 
+            error.y *= 3;
+            error.print("error");
+            rect = cv::minAreaRect(blob);
+            cv::Point2f rect_points[4];
+            rect.points(rect_points);
+            for(int j = 0; j < 4; j++)
+            {
+                line(scene, rect_points[j], rect_points[(j+1)%4], cv::Scalar(255,0,0),1,8);
+            }
+            cv::imshow("Rotated Rectangle", scene);
+            cv::waitKey(10);
+            // THE ROTATION ANGLE IS ALWAYS NEGATIVE
+            rotation = rect.angle; //this is in DEGREES
+            //std::cout<<"rotation: "<<rotation<<"\n";
+            // OBJECT HEIGHT IS GREATER THAN WIDTH
+            // FOR OBJECTS THAT LOOK LIKE  \ \
+            //                             \_\
+            //
+            // OBJECT WIDTH IS GREATER THAN HEIGHT
+            // FOR OBJECTS THAT LOOK LIKE /  /
+            //                           /__/
+            //std::cout<<"rectangle size\n\tx: " << rect.size.width <<"\n\ty: " << rect.size.height;
+            if (rotation < 45)
+            {
+                if (rect.size.width > rect.size.height)
+                    rotation = 90 + rotation;
+            }
+            else
+            {   
+                if (rect.size.width > rect.size.height)
+                    rotation = -( 90 - rotation );
+            }
+            rotation = rotation*PI/180; //to radians
+            ros::spinOnce();
+            pose = _cam_hand->endpoint_pose();
+            jp = _cam_hand->joint_positions();
+            w2 = jp.at("right_w2") + rotation;
+            double yaw = pose.pry.yaw;
+            height = pose.position.z;
+            _transform(error, yaw, height-geometry.table_height);
+            error.print("error");
+            error.z = 0;
+            if(height > stop_height)
+                error.z = .02;
+            //std::cout<<"rotation: "<<rotation<<"\n";
+            _endpoint_control(error, w2); //takes in error, w2 angle
+            ros::spinOnce();
+            pose = _cam_hand->endpoint_pose();
         }
         catch(cv::Exception e){
             ROS_ERROR(e.what());
@@ -766,6 +849,30 @@ bool SearchControl::_object()
     return true;
 }
 
+bool SearchControl::_object(cv::Rect bounds)
+{
+    _reset_loc();
+    cv::Mat scene = _search_cam->cvImage();
+    whole_scene = scene;
+    std::vector<cv::Point> blob = _getBlob(scene, bounds);
+    if (!blob.empty())
+    {
+        _bounding_rect = _get_bounds(blob);
+        _bounding_rect += bounds.tl();
+        _rotated_rect = cv::minAreaRect(blob);
+        _obj_loc = _get_centroid(blob);
+        _obj_loc.x += bounds.tl().x;
+        _obj_loc.y += bounds.tl().y;
+        circle(whole_scene, _obj_loc, 10, cv::Scalar(255,0,0), 1, 8);
+        rectangle(whole_scene, _bounding_rect, cv::Scalar(0,255,0),1,8);
+        cv::imshow("scene", whole_scene);
+    }
+    else
+        return false;
+    cv::waitKey(10);
+    return true;
+}
+
 cv::Point2f SearchControl::_best_gripping_location(std::vector<cv::Point> blob)
 {
     // return a negative number if the hand needs to drop down
@@ -783,6 +890,10 @@ cv::Point2f SearchControl::_best_gripping_location(std::vector<cv::Point> blob)
         std::cout<<"object is pretty square\n";
         return rect.center;
     }
+    // temporary while working on grip location algorithm
+    return rect.center;
+    
+    
     std::vector<cv::Vec4i> defects;
     std::vector<int> hull;
     convexHull(blob, hull, false, false);
@@ -934,11 +1045,9 @@ std::vector<cv::Point> SearchControl::_getCentralBlob(cv::Mat& scene)
     return contours[largest_contour_index];
 }
 
-std::vector<cv::Point> SearchControl::_getBlob(cv::Mat& scene)
+std::vector<cv::Point> SearchControl::_getBlob(cv::Mat& scene, cv::Rect search_bounds)
 {
     // finds outline of the largest non-white object
-    scene_height = _search_cam->height();
-    scene_width = _search_cam->width();
     std::vector<cv::Point> temp(0,cv::Point(0,0));
     if (scene.empty())
     {
@@ -969,6 +1078,64 @@ std::vector<cv::Point> SearchControl::_getBlob(cv::Mat& scene)
     if(!keypoints.empty())
         //cv::drawKeypoints(scene, keypoints, scene);
     //cv::imshow("keypoints", scene);*/
+    cv::threshold(thresh, thresh,100,255,cv::THRESH_BINARY_INV);
+    thresh = thresh - _gripper_mask;
+    thresh = thresh(search_bounds);
+    int type = cv::MORPH_ELLIPSE;
+    int sz = 1;
+    cv::Mat element = getStructuringElement( type,
+                                             cv::Size(2*sz+1, 2*sz+1),
+                                             cv::Point(sz, sz) );
+    cv::erode(thresh, thresh, element); 
+    
+    std::vector< std::vector< cv::Point > > contours;
+    std::vector< cv::Vec4i > hierarchy;
+    int largest_area = 0;
+    int largest_contour_index = 0;
+    
+    //cv::Canny(thresh, canny, 5, 250, 3);
+    cv::imshow("thresholded", thresh);
+    cv::findContours(thresh, contours, CV_RETR_CCOMP, CV_CHAIN_APPROX_SIMPLE);
+    
+    int iters = contours.size();
+    for(int i = 0; i < iters; i++)
+    {
+        double a = cv::contourArea(contours[i], false);
+        if ( a > largest_area)
+        {
+            largest_area = a;
+            largest_contour_index = i;
+        }
+    }
+    //std::cout<<"blob area: "<<largest_area<<"\n";
+    cv::imshow("blob", thresh);
+    if (largest_area < min_area)
+    {
+        return temp;
+    }
+    
+    return contours[largest_contour_index];
+}
+
+
+
+std::vector<cv::Point> SearchControl::_getBlob(cv::Mat& scene)
+{
+    // finds outline of the largest non-white object
+    std::vector<cv::Point> temp(0,cv::Point(0,0));
+    if (scene.empty())
+    {
+        //ROS_ERROR("Image to search is empty");
+        return temp;
+    }
+    cv::Mat thresh;
+    try {
+        cv::cvtColor(scene, thresh, CV_BGR2GRAY);
+    }
+    catch (cv::Exception) {
+        ROS_ERROR("Unable to convert image to greyscale");
+        return temp;
+    }
     cv::threshold(thresh, thresh,100,255,cv::THRESH_BINARY_INV);
     thresh = thresh - _gripper_mask;
     int type = cv::MORPH_ELLIPSE;
@@ -1057,10 +1224,15 @@ void SearchControl::_endpoint_control(gv::Point err, double w2)
         return;
     //std::cout<<"endpoint position"<<std::endl;
     gv::PRYPose pose = geometry.home;
+    ros::spinOnce();
     pose.position = _cam_hand->endpoint_pose().position;
+    //pose.print("current position");
+    //err.print("Error");
     pose.position -= err;
-    //pose.position.z = geometry.home.position.z-.1;
+    //pose.position.z = geometry.home.position.z;
+    pose.position.print("desired position");
     JointPositions desired = _cam_hand->get_point_position(pose.position,w2);
+    //desired.print();
     if(desired.angles.empty())
         return;
     //v_print(desired.angles, "positions");
@@ -1081,17 +1253,7 @@ void SearchControl::_endpoint_control(gv::Point err)
     //v_print(desired.angles, "positions");
     //_cam_hand->set_joint_positions(desired);
     _cam_hand->set_velocities(desired);
-}
-
-void SearchControl::_endpoint_control_accurate(gv::Point err)
-{
-    std::cout<<"endpoint accurate"<<std::endl;
-    gv::PRYPose pose;
-    pose.pry = toPRY(_cam_hand->endpoint_pose().orientation);
-    pose.position = _cam_hand->endpoint_pose().position;
-    pose.position -= err;
-    JointPositions desired = _cam_hand->get_position(pose);
-    _cam_hand->set_velocities(desired);
+//    _endpoint_control(err, 0);
 }
 
 double SearchControl::_getBlobArea()
