@@ -19,6 +19,7 @@
 #include <baxter_core_msgs/EndpointState.h>
 #include <sensor_msgs/JointState.h>
 #include <std_msgs/Bool.h>
+#include <std_msgs/Float64.h>
 /*#include <baxter_msgs/JointPositions.h>
 #include <baxter_msgs/JointVelocities.h>
 #include <baxter_msgs/EndpointState.h>*/
@@ -27,7 +28,7 @@
 #include <math.h>
 
 //each limb has a gripper
-//      #include "baxterGripper.h"
+#include "baxterGripper.h"
 #include "geometryTypes.h"
 
 
@@ -110,8 +111,11 @@ public:
     void set_joint_positions(JointPositions);
     void set_joint_velocities(JointVelocities);
     void set_joint_efforts(JointEfforts);
+    void set_command_timeout(double);
+    void exit_control_mode(double);
+    void set_joint_position_speed(double);
     
-    // Simplified Geometry IK/Controllers
+    // Simplified Geometry IK/Controllers - Relies on KDL Tree
     JointPositions get_simple_positions(gv::Point, double);
     void set_simple_positions(gv::Point, double, ros::Duration);
     
@@ -173,6 +177,8 @@ private:
     ros::Subscriber _joint_state_sub;
     ros::Subscriber _cartesian_state_sub;
     ros::Publisher _pub_joint_cmd;
+    ros::Publisher _pub_joint_cmd_timeout;
+    ros::Publisher _pub_speed_ratio;
     
     unsigned short _state_rate;
     ros::Time _last_state_time;
@@ -269,6 +275,9 @@ void BaxterLimb::Init()
     }
     //std::cout<<"Subscribers open...\n";
     _pub_joint_cmd = _nh.advertise<baxter_core_msgs::JointCommand>(topic+"/joint_command", 10);
+    _pub_joint_cmd_timeout = _nh.advertise<std_msgs::Float64>(topic+"/joint_command_timeout", 1, true);
+    _pub_speed_ratio = _nh.advertise<std_msgs::Float64>(topic+"/set_speed_ratio",1, true);
+    
     //  Enable Robot
     ros::Publisher _pub_enable;
     std::string enable_topic = "/robot/set_super_enable";
@@ -291,7 +300,7 @@ void BaxterLimb::Init()
     //gripper->calibrate();
     if (_kdl_constructor)
     {
-        std::cout<<"Kdl constructor\n";
+        //std::cout<<"Kdl constructor\n";
         int chain_joints = _chain.getNrOfJoints();
         if (chain_joints != numJoints)
         {
@@ -501,6 +510,36 @@ void BaxterLimb::set_joint_efforts(JointEfforts effort)
     msg.names = effort.names;
     msg.command = effort.efforts;
     _pub_joint_cmd.publish(msg);
+}
+
+void BaxterLimb::set_command_timeout(double timeout)
+{
+    // Set timeout in seconds for the Joint Position Controller
+    std_msgs::Float64 msg;
+    msg.data = timeout;
+    this->_pub_joint_cmd_timeout.publish(msg);
+}
+
+void BaxterLimb::exit_control_mode(double timeout = 0.2)
+{
+    // Clean exit from advanced control modes (joint torque or velocity)
+    this->set_command_timeout(timeout);
+    this->set_joint_positions( JointPositions( this->joint_names(), this->joint_angles() ) );
+}
+
+void BaxterLimb::set_joint_position_speed(double speed)
+{
+    // Set ratio of max joint speed to use during joint position moves
+    // This is used on Baxter's Position Controller
+    //          Param speed is ratio of maximum joint speed for execution
+    //          default = 0.3; range = [0.0-1.0]
+    std_msgs::Float64 msg;
+    if (speed > 1)
+        speed = 1;
+    else if (speed < 0)
+        speed = 0;
+    msg.data = speed;
+    this->_pub_speed_ratio.publish(msg);
 }
 
 void BaxterLimb::set_joint_pid(std::string name, Gains gain)
@@ -1146,13 +1185,13 @@ void BaxterLimb::_set_shoulder_mount()
     std::string name;
     int i = 0;
     
-    while(i < _chain.getNrOfSegments())
+    /*while(i < _chain.getNrOfSegments())
     {
         std::cout<<_chain.getSegment(i).getName();
         std::cout<<": "<<_chain.getSegment(i).getJoint().getType()<<"\n";
         i++;
     }
-    i = 0;
+    i = 0;*/
     while (_chain.getSegment(i).getJoint().getType() == KDL::Joint::None)
     {
         name = _chain.getSegment(i).getJoint().getName();
@@ -1189,6 +1228,7 @@ void BaxterLimb::_check_kdl()
         return;
     }
     gv::RPYPose from_baxter(endpoint_pose());
+    from_baxter.print("Baxter's Endpoint");
     double roll,pitch,yaw;
     double x,y,z;
     // KDL::Frame has origin vector p and rotation matrix M
@@ -1197,9 +1237,10 @@ void BaxterLimb::_check_kdl()
     y = frame.p.y();
     z = frame.p.z();
     gv::RPYPose from_fk(x,y,z,pitch,roll,yaw);
+    from_fk.print("KDL's Endpoint");
     gv::RPYPose err = from_fk - from_baxter;
     err.print("KDL calculation error");
-    gv::RPYPose allow(gv::Point(0.002), gv::RPY(0.003));
+    gv::RPYPose allow(gv::Point(0.02), gv::RPY(0.3));
     bool inRange = err.abs() < allow;
     if (inRange)
         return;

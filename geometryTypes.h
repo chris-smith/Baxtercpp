@@ -34,6 +34,11 @@ public:
     std::vector<std::string> names; 
     std::vector<double> angles; 
     JointPositions() {}
+    JointPositions(std::vector<std::string> _n, std::vector<double> _a)
+    {
+        this->names = _n;
+        this->angles = _a;
+    }
     JointPositions(const Eigen::VectorXd& rhs)
     {
         this->angles.clear();
