@@ -27,15 +27,15 @@ public:
     BoundingBox search_path;//  box to move gripper around while searching -- inner offset of _border
     double table_height;   //  height of table from Baxter's perspective
     double height_offset;  //  height off table for Baxter's gripper when searching for pieces
-    gv::PRYPose reset_button;  //  location of button to remove any pieces still in view and place new pieces 
+    gv::RPYPose reset_button;  //  location of button to remove any pieces still in view and place new pieces 
     BoundingBox deposit_border; //  location to place found objects
     std::vector<BoundingBox> deposit_containers;  //  containers in deposit_border
-    gv::PRYPose home;               // home locationd
+    gv::RPYPose home;               // home locationd
     
     //Search area parameters
     double borderMin(char); //get minimum dimension of _border in 'x' or 'y'
     double borderMax(char); //get maximum dimension of _border in 'x' or 'y'
-    gv::PRYPose getNextPosition(gv::PRYPose); //return a new position to move to for searching
+    gv::RPYPose getNextPosition(gv::RPYPose); //return a new position to move to for searching
     
     //deposit box drawing parameters
     void setPixelScale(int, int);
@@ -65,7 +65,7 @@ private:
     void _drawBox(cv::Mat&, BoundingBox,bool);     //draw box on img
     cv::Scalar _randomColor();                     //return random color
     BoundingBox _pixelAdjust(BoundingBox);         //multiplies boundbox members by pixel scales
-    gv::PRYPose _get_next_search_position(gv::PRYPose, int);
+    gv::RPYPose _get_next_search_position(gv::RPYPose, int);
     
 };
 
@@ -139,7 +139,7 @@ double SearchGeometry::borderMin(char coor)
     return min;
 }
 
-gv::PRYPose SearchGeometry::_get_next_search_position(gv::PRYPose current, int iter)
+gv::RPYPose SearchGeometry::_get_next_search_position(gv::RPYPose current, int iter)
 {
     //iter helps keeps a 'timeout' on this function during recursion
     if(iter > 4)
@@ -162,7 +162,7 @@ gv::PRYPose SearchGeometry::_get_next_search_position(gv::PRYPose current, int i
     
 }
 
-gv::PRYPose SearchGeometry::getNextPosition(gv::PRYPose current)
+gv::RPYPose SearchGeometry::getNextPosition(gv::RPYPose current)
 {
     return _get_next_search_position(current,0);
 }
@@ -177,20 +177,6 @@ void SearchGeometry::setImageBuffer(int x, int y)
 {
     _xBuffer = x;
     _yBuffer = y;
-}
-
-double min(double a, double b)
-{
-    if (a < b)
-        return a;
-    return b;
-}
-
-double max(double a, double b)
-{
-    if (a > b)
-        return a;
-    return b;
 }
 
 //checks if pt is on the line connecting c and d

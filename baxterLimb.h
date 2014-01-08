@@ -65,6 +65,7 @@ void to_file(std::vector<double>, std::string, bool);
 #define numJoints 7
 #define FAST true
 #define SLOW false
+#define GripperLength 7.5
 
 struct Gains{ double kp; double ki; double kd; 
     Gains() : kp(0), ki(0), kd(0) {}
@@ -79,7 +80,7 @@ public:
     BaxterLimb(std::string);                            //side
     ~BaxterLimb();
     
-    //BaxterGripper* gripper;
+    BaxterGripper* gripper;
     
     void Init();
     
@@ -238,7 +239,7 @@ BaxterLimb::BaxterLimb(std::string name)
 
 BaxterLimb::~BaxterLimb()
 {
-    //delete gripper;
+    delete gripper;
     //std::cout<< "Deleting limb object...\n";
     if (_jacobian_solver != NULL)
         delete _jacobian_solver;
@@ -296,7 +297,7 @@ void BaxterLimb::Init()
     
     
     //std::cout<<"Publisher initialized...\n";
-    //gripper = new BaxterGripper(_name);
+    gripper = new BaxterGripper(_name);
     //gripper->calibrate();
     if (_kdl_constructor)
     {
@@ -618,11 +619,11 @@ double roll_over(double angle, double limit)
 JointPositions BaxterLimb::get_simple_positions(gv::Point pt, const double w2)
 {
     double r,phi,z;   
-    //pt.print("point position");
+    // pt.print("point position");
     gv::Point offset;
     JointPositions jp = this->joint_positions();
-    offset = pt - _shoulder_mount;
-    offset.print("Offset from right arm mount");
+    offset = pt - this->_shoulder_mount;
+    // offset.print("Offset from right arm mount");
     double d1, d2, d3, d4, a, b, c, d, t1, t2, t3, t4, o1, o2;
     d1 = .27035;
     d2 = .36442;
@@ -644,7 +645,7 @@ JointPositions BaxterLimb::get_simple_positions(gv::Point pt, const double w2)
     l3 = d3+a-d;
     h = z + c;
     r = sqrt(offset.x*offset.x + offset.y*offset.y) - .069;
-    //std::cout<<"r: "<<r<<"  h: "<<h<<"\n";
+    //  std::cout<<"r: "<<r<<"  h: "<<h<<"\n";
     diag = sqrt(r*r + h*h);
     phi = atan2(h,r);
     alpha = acos((l3*l3 - diag*diag - l2*l2)/(-2*l2*diag));
@@ -653,7 +654,24 @@ JointPositions BaxterLimb::get_simple_positions(gv::Point pt, const double w2)
     t2 = phi + alpha;
     t4 = PI/2 - t3 + t2;
     t2 = -t2;
-    t1 = -PI/4 + asin(offset.x/(r+.069));
+    if (this->_name == "left") {
+        t1 = atan2(offset.y,offset.x) - PI/4;
+        /*// to the left of shoulder mount
+        if (offset.y < 0)
+            t1 = PI/4 - asin(offset.x/(r+.069));
+        // to the right
+        else
+            t1 = -PI/4 + asin(offset.x/(r+.069));*/
+    }
+    else {
+        t1 = atan2(offset.y,offset.x) + PI/4;
+        /*// to the right of shoulder mount
+        if (offset.y > 0)
+            t1 = PI/4 + asin(offset.y/(r+.069));
+        // to the left
+        else
+            t1 = -PI/4 + asin(offset.x/(r+.069));*/
+    }
     //std::cout<<"\ndesired angles for position: "<<t1<<"  "<<t2<<"  "<<t3<<"   "<<t4<<"\n";
     w2_new = roll_over(w2, PI);
     jp.names.clear();
@@ -671,9 +689,10 @@ JointPositions BaxterLimb::get_simple_positions(gv::Point pt, const double w2)
 void BaxterLimb::set_simple_positions(gv::Point pt, double w2, ros::Duration timeout)
 {
     JointPositions jp;
+    //pt.print("position");
     jp = get_simple_positions(pt, w2);
-    //jp.print();
-    accurate_to_position(jp, timeout);
+    //jp.print("desired angles");
+    this->to_position(jp, timeout);
 }
 
 JointPositions BaxterLimb::get_service_position(gv::RPYPose x)
@@ -684,7 +703,7 @@ JointPositions BaxterLimb::get_service_position(gv::RPYPose x)
     geometry_msgs::PoseStamped posestamp;
     gm::Pose mypose;
     mypose.position = x.position;
-    mypose.orientation = toQuat(x.pry);
+    mypose.orientation = toQuat(x.rpy);
 //     std::cout<<"\n";
     posestamp.pose.position = mypose.position;
 //     std::cout<<mypose.point.x<<" ";
@@ -936,9 +955,9 @@ void to_vector(const gv::RPYPose &pose, Eigen::VectorXd &vec)
     vec(0) = pose.position.x;
     vec(1) = pose.position.y;
     vec(2) = pose.position.z;
-    vec(3) = pose.pry.roll;
-    vec(4) = pose.pry.pitch;
-    vec(5) = pose.pry.yaw;
+    vec(3) = pose.rpy.roll;
+    vec(4) = pose.rpy.pitch;
+    vec(5) = pose.rpy.yaw;
 }
 
 void from_vector(std::vector<double> &to, const Eigen::VectorXd &from, int size)
@@ -1025,6 +1044,7 @@ int BaxterLimb::set_jacobian_position(gv::RPYPose desired, ros::Duration timeout
         previous_error = error;        
         r.sleep();
     }
+    this->exit_control_mode();
     //std::cout << "\nOperating time: ";
     //std::cout << ros::Time::now() - start << std::endl;
     if(_in_range(error, SLOW))
@@ -1077,6 +1097,7 @@ int BaxterLimb::quickly_to_position(JointPositions desired, ros::Duration timeou
         ros::spinOnce();
         r.sleep();
     }
+    this->exit_control_mode();
     std::cout << "\nOperating time: ";
     std::cout << ros::Time::now() - start << std::endl;
     if(_in_range(error, FAST))
@@ -1090,7 +1111,8 @@ int BaxterLimb::accurate_to_position(JointPositions desired, ros::Duration timeo
 {
     //std::cout<<"accurate"<<"\n";
     double hz = 100;
-    //desired.print();
+    desired.print("desired joint angles");
+    this->joint_positions().print("current joint angles");
     ros::Time start  = ros::Time::now();
     ros::Time last = ros::Time::now();
     ros::Rate r(hz); 
@@ -1106,6 +1128,7 @@ int BaxterLimb::accurate_to_position(JointPositions desired, ros::Duration timeo
     
     JointVelocities output;
     output.names = desired.names;
+    //v_print(error);
     
     while( !_in_range(error,SLOW) && ( ros::Time::now() - start < timeout ) && ros::ok())
     {
@@ -1136,6 +1159,9 @@ int BaxterLimb::accurate_to_position(JointPositions desired, ros::Duration timeo
         ros::spinOnce();
         r.sleep();
     }
+    std::cout<<"Exiting control loop\n";
+    this->exit_control_mode();
+    std::cout<<"Exiting control mode\n";
     //std::cout << "\nOperating time: ";
     //std::cout << ros::Time::now() - start << std::endl;
     if(_in_range(error, SLOW))
@@ -1156,7 +1182,7 @@ int BaxterLimb::to_position(JointPositions desired, ros::Duration timeout)
     std::vector<double> current = joint_angles();
     std::vector<double> error = v_difference(current, position);
     
-    while( !_in_range(error,speed) && ( ros::Time::now() - start < timeout ))
+    while( !_in_range(error,speed) && ( ros::Time::now() - start < timeout ) )
     {
         set_joint_positions(desired);   
         error = v_difference(joint_angles(), desired.angles);
@@ -1222,11 +1248,19 @@ void BaxterLimb::_check_kdl()
     KDL::ChainFkSolverPos_recursive fk(_chain);
     KDL::Frame frame;
     int pos = fk.JntToCart(_kdl_jointpositions, frame);
+    // need to account for finger length in endpoint pose for forward solver
+    // finger length should be ~7cm BUT
+    //  not accounting for finger length I'm consistently off by 2cm
+    // So that's what I'm doing here
+    KDL::Frame finger_frame( KDL::Vector(0, 0, 0.02) );
     
     if (pos < 0){
         ROS_ERROR("KDL's FK solver failed");
         return;
     }
+    std::cout<<"Frame before adding fingers"<<frame.p.x()<<" "<<frame.p.y()<<" "<<frame.p.z()<<"\n";;
+    frame = frame*finger_frame;
+    std::cout<<"Frame after adding fingers"<<frame.p.x()<<" "<<frame.p.y()<<" "<<frame.p.z()<<"\n";
     gv::RPYPose from_baxter(endpoint_pose());
     from_baxter.print("Baxter's Endpoint");
     double roll,pitch,yaw;
@@ -1236,7 +1270,7 @@ void BaxterLimb::_check_kdl()
     x = frame.p.x();
     y = frame.p.y();
     z = frame.p.z();
-    gv::RPYPose from_fk(x,y,z,pitch,roll,yaw);
+    gv::RPYPose from_fk(x,y,z,roll,pitch,yaw);
     from_fk.print("KDL's Endpoint");
     gv::RPYPose err = from_fk - from_baxter;
     err.print("KDL calculation error");
@@ -1383,9 +1417,9 @@ void BaxterLimb::set_jacobian()
 {
     // drops values < floor to 0. limits values > ceiling to ceiling
     double min_pos = .001;     // error.pos = (error.pos < eps_pos ? 0 : error.pos)
-    double min_pry = .015;     // error.pry = (error.pry < eps_pry? 0 : error.pry)
+    double min_rpy = .015;     // error.rpy = (error.rpy < eps_rpy? 0 : error.rpy)
     double max_pos = .005;
-    double max_pry = .05;
+    double max_rpy = .05;
     if (fabs(error.position.x) < min_pos)
         error.position.x = 0;
     else if(fabs(error.position.x) > max_pos)
@@ -1398,18 +1432,18 @@ void BaxterLimb::set_jacobian()
         error.position.z = 0;
     else if(fabs(error.position.z) > max_pos)
         error.position.z = max_pos*(error.position.z < 0?-1:1);
-    if (fabs(error.pry.pitch) < min_pry)
-        error.pry.pitch = 0;
-    else if(fabs(error.pry.pitch) > max_pry)
-        error.pry.pitch = max_pry*(error.pry.pitch < 0?-1:1);
-    if (fabs(error.pry.roll) < min_pry)
-        error.pry.roll = 0;
-    else if(fabs(error.pry.roll) > max_pry)
-        error.pry.roll = max_pry*(error.pry.roll < 0?-1:1);
-    if (fabs(error.pry.yaw) < min_pry)
-        error.pry.yaw = 0;
-    else if(fabs(error.pry.yaw) > max_pry)
-        error.pry.yaw = max_pry*(error.pry.yaw < 0?-1:1);
+    if (fabs(error.rpy.pitch) < min_rpy)
+        error.rpy.pitch = 0;
+    else if(fabs(error.rpy.pitch) > max_rpy)
+        error.rpy.pitch = max_rpy*(error.rpy.pitch < 0?-1:1);
+    if (fabs(error.rpy.roll) < min_rpy)
+        error.rpy.roll = 0;
+    else if(fabs(error.rpy.roll) > max_rpy)
+        error.rpy.roll = max_rpy*(error.rpy.roll < 0?-1:1);
+    if (fabs(error.rpy.yaw) < min_rpy)
+        error.rpy.yaw = 0;
+    else if(fabs(error.rpy.yaw) > max_rpy)
+        error.rpy.yaw = max_rpy*(error.rpy.yaw < 0?-1:1);
 }*/
 
 /*void BaxterLimb::check_joint_limits()
@@ -1463,9 +1497,9 @@ bool BaxterLimb::endpoint_in_range(gv::RPYPose& pos)
     ret = ret && current.position.x < endpoint_error.position.x;
     ret = ret && current.position.y < endpoint_error.position.y;
     ret = ret && current.position.z < endpoint_error.position.z;
-    ret = ret && current.pry.pitch < endpoint_error.pry.pitch;
-    ret = ret && current.pry.roll < endpoint_error.pry.roll;
-    ret = ret && current.pry.yaw < endpoint_error.pry.yaw;
+    ret = ret && current.rpy.pitch < endpoint_error.rpy.pitch;
+    ret = ret && current.rpy.roll < endpoint_error.rpy.roll;
+    ret = ret && current.rpy.yaw < endpoint_error.rpy.yaw;
     return ret;
 }
 

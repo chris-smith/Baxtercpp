@@ -103,6 +103,10 @@ void BaxterGripper::_init()
     
     // Calibrate gripper
     this->calibrate();
+    while (!this->ready()) {
+        ros::spinOnce();
+        //ROS_ERROR(" %s_gripper waiting for ready", name.c_str());
+    }
     this->block = false;
     this->gripperLength = 0;
 }
@@ -139,8 +143,10 @@ void BaxterGripper::_on_ir_range(const sensor_msgs::Range::ConstPtr& msg)
 
 void BaxterGripper::_wait(ros::Duration timeout)
 {
+    ros::Rate r(2);
+    r.sleep();
     ros::Time start = ros::Time::now();
-    while( this->state.moving && (ros::Time::now() - start < timeout) )
+    while( this->state.moving && !this->ready() && (ros::Time::now() - start < timeout) )
     {
         ros::spinOnce();
     }
@@ -172,8 +178,8 @@ void BaxterGripper::calibrate()
     std::cout<<"type: "<<this->type()<<"\n";
     if (this->type() != "electric")
         return;
-    if (this->calibrated())
-        this->clear_calibration();
+    //if (this->calibrated())
+    //    this->clear_calibration();
     if (this->error())
         this->reset();
     ros::Duration timeout(5);
@@ -242,14 +248,16 @@ std::string BaxterGripper::type()
             val = "custom";
             break;
         default:
-            val = "none";
+            val = "electric"; // should be "none"
             break;
     }
     return val;
 }
 
-uint BaxterGripper::hardware_id(){
-    
+uint BaxterGripper::hardware_id() {
+    // Return what seems like the default if none provided
+    if (this->state.id == 0)
+        return 65664;
     return this->state.id;
 }
 

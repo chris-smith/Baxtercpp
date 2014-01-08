@@ -1,3 +1,6 @@
+#ifndef GEOMETRY_TYPES
+#define GEOMETRY_TYPES
+
 #include "opencv2/features2d/features2d.hpp"
 #include "geometry_msgs/Point.h"
 #include "geometry_msgs/Pose.h"
@@ -7,8 +10,6 @@
 #include "geometry_msgs/Vector3.h"
 //#define _USE_MATH_DEFINES
 //#include <math.h>
-#ifndef GEOMETRY_TYPES
-#define GEOMETRY_TYPES
 
 /*    Here are the types defined here
 
@@ -18,7 +19,7 @@ class Pose{ Point point; Quaternion quaternion; };
 class Twist{ Point linear; Point angular; };
 class Wrench{ Point force; Point torque; };
 class RPY{ double pitch; double roll; double yaw; };
-class RPYPose{ Point point; RPY pry; };
+class RPYPose{ Point point; RPY rpy; };
 
 /* Define operators for structs *
 *********************************/
@@ -542,28 +543,28 @@ namespace geometry_variables{
     class RPYPose
     { 
     public:
-        Point position; RPY pry; 
-        RPYPose(Point a, RPY b) : position(a), pry(b) {}
+        Point position; RPY rpy; 
+        RPYPose(Point a, RPY b) : position(a), rpy(b) {}
         RPYPose(double a, double b, double c, double d, double e, double f) :
-            position(Point(a,b,c)), pry(RPY(d,e,f)) {}
-        RPYPose(double a) : position(a), pry(a) {}
-        RPYPose(const Pose& a) : position(a.position), pry(a.orientation) {}
-        RPYPose(const gm::Pose& a) : position(a.position), pry(a.orientation) {}
-        //RPYPose(RPYPose a) : position(a.position), pry(a.pry) {}
-        RPYPose() : position(0), pry(0) {}
+            position(Point(a,b,c)), rpy(RPY(d,e,f)) {}
+        RPYPose(double a) : position(a), rpy(a) {}
+        RPYPose(const Pose& a) : position(a.position), rpy(a.orientation) {}
+        RPYPose(const gm::Pose& a) : position(a.position), rpy(a.orientation) {}
+        //RPYPose(RPYPose a) : position(a.position), rpy(a.rpy) {}
+        RPYPose() : position(0), rpy(0) {}
         RPYPose(const Eigen::VectorXd &rhs)
         {
             if (rhs.rows() == 6)
             {
                 this->position = rhs;
-                this->pry = rhs;
+                this->rpy = rhs;
             }
         }
         RPYPose& operator=(const geometry_msgs::Pose &rhs)
         {
             this->position = rhs.position;
-            this->pry = RPY(rhs.orientation);
-            //std::cout<<"converting gm::pose to prypose\n";
+            this->rpy = RPY(rhs.orientation);
+            //std::cout<<"converting gm::pose to rpypose\n";
             return *this;
         }
         RPYPose& operator=(const Eigen::VectorXd &rhs)
@@ -571,32 +572,32 @@ namespace geometry_variables{
             if (rhs.rows() != 6)
                 return *this;
             this->position = rhs;
-            this->pry = rhs;
+            this->rpy = rhs;
             return *this;
         }
         RPYPose& operator+=(const RPYPose &a)
         {
-            this->pry += a.pry;
+            this->rpy += a.rpy;
             this->position += a.position;
             return *this;
         }
         void print()
         {
             position.print();
-            pry.print();
+            rpy.print();
         }
         void print(std::string title)
         {
             std::cout<<title<<":\n\t";
             position.print();
             std::cout<<"\t";
-            pry.print();
+            rpy.print();
         }
         RPYPose abs()
         {
             RPYPose ret;
             ret.position = this->position.abs();
-            ret.pry = this->pry.abs();
+            ret.rpy = this->rpy.abs();
             return ret;
         }
         operator cv::Mat()
@@ -605,9 +606,9 @@ namespace geometry_variables{
             ret.at<double>(0,0) = this->position.x;
             ret.at<double>(0,1) = this->position.y;
             ret.at<double>(0,2) = this->position.z;
-            ret.at<double>(0,3) = this->pry.pitch;
-            ret.at<double>(0,4) = this->pry.roll;
-            ret.at<double>(0,5) = this->pry.yaw;
+            ret.at<double>(0,3) = this->rpy.pitch;
+            ret.at<double>(0,4) = this->rpy.roll;
+            ret.at<double>(0,5) = this->rpy.yaw;
             return ret;
         }
     };
@@ -616,12 +617,12 @@ namespace geometry_variables{
     public:
         Eigen::Matrix3d mat;
         Rotation() {}
-        Rotation(const RPY& pry) 
+        Rotation(const RPY& rpy) 
         {
             double thet,gam,phi;
-            thet = pry.pitch;
-            gam = pry.yaw;
-            phi = pry.roll;
+            thet = rpy.pitch;
+            gam = rpy.yaw;
+            phi = rpy.roll;
             mat(0,0) = cos(thet)*cos(gam);
             mat(0,1) = cos(phi)*sin(gam) + sin(phi)*sin(thet)*cos(gam);
             mat(0,2) = sin(phi)*sin(gam) - cos(phi)*sin(thet)*cos(gam);
@@ -805,28 +806,28 @@ namespace geometry_variables{
     {
         RPYPose ret;
         ret.position = a.position + b.position;
-        ret.pry = a.pry + b.pry;
+        ret.rpy = a.rpy + b.rpy;
         return ret;
     }
     RPYPose operator-(const RPYPose &a, const RPYPose &b)
     {
         RPYPose ret;
         ret.position = a.position - b.position;
-        ret.pry = a.pry - b.pry;
+        ret.rpy = a.rpy - b.rpy;
         return ret;
     }
     RPYPose operator*(const RPYPose &a, const double b)
     {
         RPYPose ret;
         ret.position = a.position*b;
-        ret.pry = a.pry*b;
+        ret.rpy = a.rpy*b;
         return ret;
     }
     RPYPose operator/(const RPYPose &a, const double b)
     {
         RPYPose ret;
         ret.position = a.position/b;
-        ret.pry = a.pry/b;
+        ret.rpy = a.rpy/b;
         return ret;
     }
 //     Eigen::VectorXd& operator=(const Eigen::VectorXd &lhs, const RPYPose &rhs)
@@ -839,21 +840,21 @@ namespace geometry_variables{
     {
         bool ret = true;
         ret = ret && (a.position == b.position);
-        ret = ret && (a.pry == b.pry);
+        ret = ret && (a.rpy == b.rpy);
         return ret;
     }
     bool operator<(const RPYPose &a, const RPYPose &b)
     {
         bool ret = true;
         ret = ret && (a.position < b.position);
-        ret = ret && (a.pry < b.pry);
+        ret = ret && (a.rpy < b.rpy);
         return ret;
     }
     bool operator>(const RPYPose &a, const RPYPose &b)
     {
         bool ret = true;
         ret = ret && (a.position > b.position);
-        ret = ret && (a.pry > b.pry);
+        ret = ret && (a.rpy > b.rpy);
         return ret;
     }
 }
@@ -863,12 +864,45 @@ namespace geometry_variables{
  * *************************/
 namespace gv = geometry_variables;
 
-gv::Quaternion toQuat(gv::RPY pry)
+// Conversions, etc
+
+double max(const double &a, const double& b)
+{
+    if (a > b)
+        return a;
+    return b;
+}
+
+double min(const double &a, const double& b)
+{
+    if (a < b)
+        return a;
+    return b;
+}
+
+double constrain(double &val, const double &low, const double &up)
+{
+    if (val > up)
+        val = up;
+    else if (val < low)
+        val = low;
+    return val;
+}
+
+double map(double &val, const double &from_low, const double &from_high, const double &to_low, const double &to_high)
+{
+    constrain(val, from_low, from_high);
+    double from_range = from_high - from_low;
+    double to_range = to_high - to_low;
+    return  ( (val - from_low) / from_range ) * to_range + to_low;
+}
+
+gv::Quaternion toQuat(gv::RPY rpy)
 {
     gv::Quaternion quat;
-    double p = pry.pitch/2;
-    double r = pry.roll/2;
-    double y = pry.yaw/2;
+    double p = rpy.pitch/2;
+    double r = rpy.roll/2;
+    double y = rpy.yaw/2;
     quat.w = cos(r)*cos(p)*cos(y) + sin(r)*sin(p)*sin(y); // q0
     quat.x = sin(r)*cos(p)*cos(y) - cos(r)*sin(p)*sin(y); // q1
     quat.y = cos(r)*sin(p)*cos(y) + sin(r)*cos(p)*sin(y); // q2
@@ -878,15 +912,15 @@ gv::Quaternion toQuat(gv::RPY pry)
     
 gv::RPY toRPY(gv::Quaternion quat)
 {
-    gv::RPY pry;
+    gv::RPY rpy;
     double q0 = quat.w;
     double q1 = quat.x;
     double q2 = quat.y;
     double q3 = quat.z;
-    pry.pitch = asin(2*(q0*q2 - q3*q1));
-    pry.roll = atan2(2*(q0*q1 + q2*q3),1-2*(q1*q1 + q2*q2));
-    pry.yaw = atan2(2*(q0*q3 + q1*q2),1-2*(q2*q2 + q3*q3));
-    return pry;
+    rpy.pitch = asin(2*(q0*q2 - q3*q1));
+    rpy.roll = atan2(2*(q0*q1 + q2*q3),1-2*(q1*q1 + q2*q2));
+    rpy.yaw = atan2(2*(q0*q3 + q1*q2),1-2*(q2*q2 + q3*q3));
+    return rpy;
 }
 
 /* *  Custom Overloads of OpenCV Operators  *

@@ -1,4 +1,4 @@
-#include "rosCamWrap.h"
+#include "baxterCam.h"
 #include <geometry_msgs/Point.h>
 #include <string>
 #include <dirent.h>
@@ -17,6 +17,7 @@ public:
     void scene(const cv::Mat&);       //set the image to search through
     void match();
     void save_scene();                // prompts user to save scene in specified directory
+    void save_scene(std::string);
 private:
     ObjectClassifier();
     
@@ -31,7 +32,7 @@ private:
     std::vector<cv::KeyPoint> _query_keypoints;
     std::vector<cv::Mat> _db_descriptors;
     cv::Mat _query_descriptors;
-    cv::FlannBasedMatcher _flannMatcher;
+    cv::FlannBasedMatcher _matcher;
     int _min_hessian;
     std::vector<cv::DMatch> _matches;
     std::vector<std::string> _valid_types;      // valid image file types to be placed in db
@@ -250,8 +251,8 @@ void ObjectClassifier::_load_images_recurse(std::string path)
 void ObjectClassifier::scene(const cv::Mat& scene)
 {
     _scene = scene;
-    cv::SurfFeatureDetector _detector(_min_hessian);
-    cv::SurfDescriptorExtractor _extractor;
+    cv::SiftFeatureDetector _detector(_min_hessian);
+    cv::SiftDescriptorExtractor _extractor;
     _detector.detect(_scene, _query_keypoints);
     _extractor.compute(_scene, _query_keypoints, _query_descriptors);
     //std::cout<<"scene descriptors: "<<_query_descriptors.size()<<"\n";
@@ -260,8 +261,8 @@ void ObjectClassifier::scene(const cv::Mat& scene)
 
 void ObjectClassifier::_train_matcher()
 {
-    cv::SurfFeatureDetector _detector(_min_hessian);
-    cv::SurfDescriptorExtractor _extractor;
+    cv::SiftFeatureDetector _detector(_min_hessian);
+    cv::SiftDescriptorExtractor _extractor;
     std::cout<<"Detecting keypoints...\n";
     if(_db_images.size() == 0){
         ROS_ERROR("Image Database is empty. Unable to train matcher");
@@ -273,11 +274,12 @@ void ObjectClassifier::_train_matcher()
     for(int i = 0; i < _db_descriptors.size(); i++)
     {
         if(_db_descriptors[i].empty())
-            cvError(0, "Train Matcher","Descriptor Empty -- Check file path", __FILE__,__LINE__);
+            ROS_ERROR("Missing descriptors");
+            //cvError(0, "Train Matcher","Descriptor Empty -- Check file path", __FILE__,__LINE__);
     }
-    _flannMatcher.add(_db_descriptors);
+    _matcher.add(_db_descriptors);
     std::cout<<"Training matcher...\n";
-    _flannMatcher.train();
+    _matcher.train();
     std::cout<<"Training Complete!\n";
 }
 
@@ -288,7 +290,7 @@ void ObjectClassifier::match()
     if (_query_descriptors.empty())
         ROS_ERROR("Unable to find any descriptors in the image");
     else{
-        _flannMatcher.match(_query_descriptors, _matches);
+        _matcher.match(_query_descriptors, _matches);
         std::vector<cv::DMatch> good_matches; //distance should be less than .5???
         cv::Mat match_img;
         std::vector<uint> _num_matches(_db_image_types.size(), 0);
@@ -367,6 +369,67 @@ void ObjectClassifier::save_scene()
     _save_image();
 }
 
+void ObjectClassifier::save_scene(std::string resp)
+{
+    bool invalid = true;
+    std::string adjusted;
+    std::size_t found;
+    unsigned file_type_loc;
+    std::string file_name;
+    std::string extension;
+    std::string valid_chars("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.");
+    while(invalid && ros::ok())
+    {
+        found = resp.find_first_not_of(valid_chars);
+        if (found != std::string::npos)
+        {
+            std::cout<<"There is an invalid character in your response.";
+            std::cout<<" Acceptable characters are [A-Za-z0-9_]\n";
+            std::cout<<"Please enter a new file name:\n";
+        }
+        else
+        {
+            file_type_loc = resp.find_last_of(".");
+            file_name = resp;
+            if (file_type_loc == std::string::npos)
+            {
+                extension = ".jpg";
+                file_name.substr(0, file_type_loc-1);
+            }
+            else
+            {
+                extension = file_name.substr(file_type_loc);
+            }
+            //file_name +=extension;
+            //std::cout<<"Trying to name file "<<file_name<<extension<<"...\n";
+            invalid = false;
+        }
+    }
+    bool success;
+    //file_name = file_name.substr(0, file_type_loc);
+    std::stringstream ss;
+    ss << _dir_path << "/" << file_name;
+    //std::cout<<"getting files at path "<<ss.str()<<"\n";
+    int num_files = _get_num_files(ss.str());
+    if (num_files == 0)
+    {
+        std::string createFolderCommand = "mkdir " + ss.str();
+        system(createFolderCommand.c_str());
+    }    
+    //std::cout<<" There are currently "<<num_files<<" of that type\n";
+    try{
+        ss <<"/"<< num_files << extension;
+        //std::cout<<"saving file as " << ss.str()<<"\n";
+        cv::imwrite(ss.str(), _scene);
+    }
+    catch(std::runtime_error& ex)
+    {
+        fprintf(stderr, "Exception convertion image to %s format: %s\n", extension.substr(1).c_str(), ex.what());
+        return;
+    }
+    std::cout<<"File saved as "<<ss.str()<<"!\n";
+}
+
 void ObjectClassifier::_save_image()
 {
     cv::imshow("Current Scene",_scene);
@@ -391,7 +454,7 @@ void ObjectClassifier::_get_name_for_image()
     std::string file_name;
     std::string extension;
     std::string valid_chars("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.");
-    std::cout<<"What folder should this go in?\n";
+    std::cout<<"What type is this?\n";
     while(invalid && ros::ok())
     {
         std::cin >> resp;
@@ -449,7 +512,7 @@ void ObjectClassifier::_get_name_for_image()
 int ObjectClassifier::_get_num_files(std::string path)
 {
     DIR* dir;
-    std::cout<<"Getting number of files at path "<<path<<"\n";
+    //std::cout<<"Getting number of files at path "<<path<<"\n";
     dir = opendir(path.c_str());
     dirent* dp;
     unsigned file_type_loc;
@@ -462,7 +525,7 @@ int ObjectClassifier::_get_num_files(std::string path)
     while ((dp = readdir(dir)) != NULL)
     {
         file_name = dp->d_name;
-        std::cout<<file_name<<"\n";
+        //std::cout<<file_name<<"\n";
         file_type_loc = file_name.find_last_of(".");
         if (file_type_loc == std::string::npos)
             continue;
