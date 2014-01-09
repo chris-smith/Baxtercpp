@@ -197,6 +197,12 @@ public:
             std::cout<< this->velocities[i] << "\n";
         }
     }
+    void print(std::string title) 
+    {
+        std::cout<<title<<":\n";
+        this->print();
+        std::cout<<"-------\n";
+    }
 private:
 };
 bool operator<(const JointVelocities& a, const JointVelocities &b)

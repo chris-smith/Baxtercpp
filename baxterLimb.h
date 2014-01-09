@@ -806,7 +806,7 @@ int BaxterLimb::set_velocities(JointPositions desired)
     output.velocities = compute_gains(error, integral, derivative, SLOW);
     //output.print("velocities");
     _limit_velocity(output.velocities);
-    output.print("limited velocities");
+    //output.print("limited velocities");
     set_joint_velocities(output);
     ros::spinOnce();
     return 1;
@@ -1254,7 +1254,8 @@ void BaxterLimb::_check_kdl()
     KDL::ChainFkSolverPos_recursive fk(_chain);
     KDL::Frame frame;
     int pos = fk.JntToCart(_kdl_jointpositions, frame);
-    // need to account for finger length in endpoint pose for forward solver
+    
+    // Need to account for finger length in endpoint pose for forward solver
     // finger length should be ~7cm BUT
     //  not accounting for finger length I'm consistently off by 2cm
     // So that's what I'm doing here
@@ -1264,11 +1265,11 @@ void BaxterLimb::_check_kdl()
         ROS_ERROR("KDL's FK solver failed");
         return;
     }
-    std::cout<<"Frame before adding fingers"<<frame.p.x()<<" "<<frame.p.y()<<" "<<frame.p.z()<<"\n";;
+    //std::cout<<"Frame before adding fingers"<<frame.p.x()<<" "<<frame.p.y()<<" "<<frame.p.z()<<"\n";;
     frame = frame*finger_frame;
-    std::cout<<"Frame after adding fingers"<<frame.p.x()<<" "<<frame.p.y()<<" "<<frame.p.z()<<"\n";
+    //std::cout<<"Frame after adding fingers"<<frame.p.x()<<" "<<frame.p.y()<<" "<<frame.p.z()<<"\n";
     gv::RPYPose from_baxter(endpoint_pose());
-    from_baxter.print("Baxter's Endpoint");
+    //from_baxter.print("Baxter's Endpoint");
     double roll,pitch,yaw;
     double x,y,z;
     // KDL::Frame has origin vector p and rotation matrix M
@@ -1277,9 +1278,11 @@ void BaxterLimb::_check_kdl()
     y = frame.p.y();
     z = frame.p.z();
     gv::RPYPose from_fk(x,y,z,roll,pitch,yaw);
-    from_fk.print("KDL's Endpoint");
+    //from_fk.print("KDL's Endpoint");
     gv::RPYPose err = from_fk - from_baxter;
-    err.print("KDL calculation error");
+    //err.print("KDL calculation error");
+    
+    // this is pretty loose right now
     gv::RPYPose allow(gv::Point(0.02), gv::RPY(0.3));
     bool inRange = err.abs() < allow;
     if (inRange)
