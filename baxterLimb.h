@@ -524,6 +524,7 @@ void BaxterLimb::set_command_timeout(double timeout)
 void BaxterLimb::exit_control_mode(double timeout = 0.2)
 {
     // Clean exit from advanced control modes (joint torque or velocity)
+    ros::spinOnce();
     this->set_command_timeout(timeout);
     this->set_joint_positions( JointPositions( this->joint_names(), this->joint_angles() ) );
 }
@@ -795,12 +796,17 @@ int BaxterLimb::set_velocities(JointPositions desired)
     std::vector<double> integral(position.size(),0);
     std::vector<double> derivative(position.size(),0);
     
+    //desired.print("desired angles");
     JointVelocities output;
     output.names = desired.names;
-
-    error = v_difference(position, joint_angles());
+    ros::spinOnce();
+    //this->joint_positions().print("current angles");
+    error = v_difference(position, this->joint_angles());
+    //v_print(error, "error");
     output.velocities = compute_gains(error, integral, derivative, SLOW);
+    //output.print("velocities");
     _limit_velocity(output.velocities);
+    output.print("limited velocities");
     set_joint_velocities(output);
     ros::spinOnce();
     return 1;
@@ -1185,7 +1191,7 @@ int BaxterLimb::to_position(JointPositions desired, ros::Duration timeout)
     while( !_in_range(error,speed) && ( ros::Time::now() - start < timeout ) )
     {
         set_joint_positions(desired);   
-        error = v_difference(joint_angles(), desired.angles);
+        error = v_difference(this->joint_angles(), desired.angles);
         ros::spinOnce();
         r.sleep();
     }
