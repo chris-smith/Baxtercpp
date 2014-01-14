@@ -91,9 +91,9 @@ public:
     JointPositions joint_positions();
     std::string name();
     std::vector<std::string> joint_names();             //return _joint_names
-    gm::Pose endpoint_pose();                               //return endpoint pose
-    gm::Twist endpoint_velocity();                          //return endpoint velocity
-    gm::Wrench endpoint_effort();                           //return endpoint effort
+    gm::Pose endpoint_pose();                           //return endpoint pose
+    gm::Twist endpoint_velocity();                      //return endpoint velocity
+    gm::Wrench endpoint_effort();                       //return endpoint effort
     unsigned short state_rate();                        //return _state_rate
     
     // Set/Get control parameters
@@ -149,6 +149,8 @@ public:
     // Returns instantaneous velocities to move to desired position - conservative
     JointVelocities get_velocities(JointPositions);
     int set_velocities(JointPositions);
+    void clear_integral();              // clears integral term used in set_joint_velocities()
+    void reset_clock();                   // update _lastSetVel
     
     bool in_range(std::vector<double>);
     std::vector<double> compute_gains(std::vector<double>, std::vector<double>, std::vector<double>, bool);
@@ -167,6 +169,8 @@ private:
     std::vector<double> _allowed_error; // error to be considered "there" for velocity control
     std::vector<double> _max_velocity; // strictly >= 0
     std::vector<double> _max_acceleration; // strictly >= 0
+    std::vector<double> _integral;          // tracks integral error for set_velocity    
+    ros::Time _lastSetVel;                  // last time set_joint_velocities was called for integral error
     Gains _pid[numJoints];
     gm::Pose _cartesian_pose;
     gm::Twist _cartesian_velocity;
@@ -256,6 +260,7 @@ void BaxterLimb::Init()
     _allowed_error.resize(numJoints, 0);
     _max_velocity.resize(numJoints, 0);
     _max_acceleration.resize(numJoints, 0);
+    _integral.resize(numJoints, 0);
     _kdl_jointpositions.resize(numJoints);
     KDL::SetToZero(_kdl_jointpositions);
     _set_names();
@@ -504,6 +509,16 @@ void BaxterLimb::set_joint_velocities(JointVelocities velocity)
     _pub_joint_cmd.publish(msg);
 }
 
+void BaxterLimb::clear_integral()
+{
+    this->_integral.resize(numJoints, 0);
+}
+
+void BaxterLimb::reset_clock()
+{
+    this->_lastSetVel = ros::Time::now();
+}
+
 void BaxterLimb::set_joint_efforts(JointEfforts effort)
 {
     baxter_core_msgs::JointCommand msg;
@@ -529,7 +544,7 @@ void BaxterLimb::exit_control_mode(double timeout = 0.2)
     this->set_joint_positions( JointPositions( this->joint_names(), this->joint_angles() ) );
 }
 
-void BaxterLimb::set_joint_position_speed(double speed)
+void BaxterLimb::set_joint_position_speed(double speed = 0.3)
 {
     // Set ratio of max joint speed to use during joint position moves
     // This is used on Baxter's Position Controller
@@ -790,10 +805,10 @@ JointVelocities BaxterLimb::get_velocities(JointPositions desired)
 
 int BaxterLimb::set_velocities(JointPositions desired)
 {
+    ros::Duration dt;
     std::vector<double> position = desired.angles;
     std::vector<double> current = joint_angles();
     std::vector<double> error = v_difference(current, position);
-    std::vector<double> integral(position.size(),0);
     std::vector<double> derivative(position.size(),0);
     
     //desired.print("desired angles");
@@ -803,12 +818,16 @@ int BaxterLimb::set_velocities(JointPositions desired)
     //this->joint_positions().print("current angles");
     error = v_difference(position, this->joint_angles());
     //v_print(error, "error");
-    output.velocities = compute_gains(error, integral, derivative, SLOW);
-    //output.print("velocities");
+    dt = ros::Time::now() - this->_lastSetVel;
+    this->_integral = v_sum(this->_integral, product(error, toSec(dt.nsec)));
+    v_print(this->_integral);
+    output.velocities = compute_gains(error, this->_integral, derivative, SLOW);
+    output.print("velocities");
     _limit_velocity(output.velocities);
     //output.print("limited velocities");
     set_joint_velocities(output);
     ros::spinOnce();
+    this->_lastSetVel = ros::Time::now();
     return 1;
 }
 

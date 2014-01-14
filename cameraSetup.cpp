@@ -19,7 +19,7 @@ int main(int argc, char** argv) {
     std::cout<<"Setting up right cam...\n";
     right_cam.resolution(Resolution(320,200));
     right_cam.half_resolution(false);
-    right_cam.window(Resolution(545,220)); // (570, 150)
+    right_cam.window(Resolution(535,220)); // (570, 150)
     right_cam.gain(15);
     right_cam.exposure(10);
     
@@ -29,7 +29,7 @@ int main(int argc, char** argv) {
     std::cout<<"Setting up left_cam...\n";
     left_cam.resolution(Resolution(320,200));
     left_cam.half_resolution(false);
-    left_cam.window(Resolution(545,220)); // (570, 150)
+    left_cam.window(Resolution(555,220)); // (570, 150)
     left_cam.gain(15);
     
     std::cout<<"Starting trackbar...\n";
