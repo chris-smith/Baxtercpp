@@ -577,7 +577,7 @@ void SearchControl::_lower(const double stop_height)
     double height = _right_hand->endpoint_pose().position.z;
     double w2 = 0;
     double area, rectArea, percentArea, rectRatio;
-    double ki = 0.1;    // integral gain
+    double ki = 0.8;    // integral gain
     ros::Time last = ros::Time::now();
     ros::Duration dt;
     while ((!(error.abs() < 0.001) || (fabs(rotation) > 0.01)) && ros::ok())
@@ -617,13 +617,15 @@ void SearchControl::_lower(const double stop_height)
             error.x = centroid.x - scene_width/2; 
             error.y = centroid.y - scene_height/2;
             error.z = 0;
+            error.print("pixel error");
             error.y /= scene_height;
             error.x /= scene_width; 
             // maybe too noisy?
             //error.y *= 1.05;
             integral_error += error*toSec(dt.nsec);
-            integral_error *= ki;
-            error += integral_error;
+            //integral_error *= ki;
+            integral_error.print("integral error");
+            error += integral_error*ki;
             error.print("error");
             cv::Point2f rect_points[4];
             rect.points(rect_points);
@@ -670,7 +672,7 @@ void SearchControl::_lower(const double stop_height)
             height = pose.position.z;
             _transform(error, yaw, height-geometry.table_height);
             error.print("transformed error");
-            std::cout<<"height: "<<height<<"  stop height: "<<stop_height<<"\n";
+            std::cout<<"yaw: "<<yaw<<" height: "<<height<<"  stop height: "<<stop_height<<"\n";
             error.z = height - stop_height;
             if(height > stop_height)
                 error.z = .05;
@@ -680,6 +682,7 @@ void SearchControl::_lower(const double stop_height)
             pose = _right_hand->endpoint_pose();
         }
         catch(cv::Exception e){
+            _right_hand->exit_control_mode();
             ROS_ERROR("OpenCV error: %s",e.what());
         }
         //error.z = pose.position.z - geometry.table_height;    
@@ -1041,8 +1044,8 @@ void SearchControl::_endpoint_control(gv::Point err, double w2)
     desired.print("desired angles");
     if(desired.angles.empty())
         return;
-    _right_hand->set_joint_positions(desired);
-    //_right_hand->set_velocities(desired);
+    //_right_hand->set_joint_positions(desired);
+    _right_hand->set_velocities(desired);
     //_right_hand->exit_control_mode();
 }
 
@@ -1224,8 +1227,19 @@ void SearchControl::_transform(gv::Point &err, double yaw, double range)
     //transform between pixels and real distances.
     // (pixels/pixel)*(m/m)*m
     double tempx,tempy;
-    tempy = err.y * height_ratio * range;
-    tempx = err.x * width_ratio * range;
+    // height_ratio is not linear,constant with range
+    //  maybe develop a better model...
+    std::cout<<"range: "<<range;
+    if (range > .08){
+        std::cout<<" is *large*\n";
+        tempy = err.y * height_ratio * range;
+        tempx = err.x * width_ratio * range;
+    }
+    else{
+        std::cout<<" is *small*\n";
+        tempy = err.y * 2.28 * range;
+        tempx = err.x * 3.648 * range;
+    }
     
     // account for angle of hand (yaw)
     // 0 yaw has gripper "facing" backwards

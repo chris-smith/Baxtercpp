@@ -62,7 +62,7 @@ void to_file(std::vector<double>, std::string, bool);
 #ifndef BAXTER_LIMB
 #define BAXTER_LIMB
 
-#define numJoints 7
+#define NUMJOINTS 7
 #define FAST true
 #define SLOW false
 #define GripperLength 7.5
@@ -71,7 +71,7 @@ struct Gains{ double kp; double ki; double kd;
     Gains() : kp(0), ki(0), kd(0) {}
     Gains(double a, double b, double c) : kp(a), ki(b), kd(c) {}
 };
-std::string joint_ids[numJoints] = {"_s0","_s1","_e0","_e1","_w0","_w1","_w2"};
+std::string joint_ids[NUMJOINTS] = {"_s0","_s1","_e0","_e1","_w0","_w1","_w2"};
 
 class BaxterLimb
 {
@@ -105,6 +105,7 @@ public:
     void set_max_acceleration(double);
     void set_joint_pid(std::string, Gains);
     Gains get_joint_pid(std::string);
+    std::vector<Gains> get_joint_pids();
     void set_endpoint_pid(Gains);
     Gains get_endpoint_pid();
     
@@ -155,14 +156,16 @@ public:
     bool in_range(std::vector<double>);
     std::vector<double> compute_gains(std::vector<double>, std::vector<double>, std::vector<double>, bool);
     bool endpoint_in_range(gv::RPYPose&);
-
+    void limit_velocity(std::vector<double>&); //v = (v > _max_vel ? _max_vel : v)
+    void limit_acceleration(std::vector<double>&, std::vector<double>, double); //ensures velocity not changing too fast
+    void limit_velocities(JointVelocities&, std::vector<double>&);                  // removes velocity elements whose corresponding error is small
 
 private:
     BaxterLimb();
     bool _set; //true if any subscribers have returned data yet
     
     std::string _name; //name of limb (left, right)
-    std::string _joint_names[numJoints]; //explicit joint names
+    std::string _joint_names[NUMJOINTS]; //explicit joint names
     std::vector<double> _joint_angle;
     std::vector<double> _joint_velocity;
     std::vector<double> _joint_effort;
@@ -171,7 +174,7 @@ private:
     std::vector<double> _max_acceleration; // strictly >= 0
     std::vector<double> _integral;          // tracks integral error for set_velocity    
     ros::Time _lastSetVel;                  // last time set_joint_velocities was called for integral error
-    Gains _pid[numJoints];
+    std::vector<Gains> _pid;
     gm::Pose _cartesian_pose;
     gm::Twist _cartesian_velocity;
     gm::Wrench _cartesian_effort;
@@ -205,10 +208,8 @@ private:
     void _set_names(); //sets _joint_names in constructor
     void _on_endpoint_states(const baxter_core_msgs::EndpointState::ConstPtr&); //callback for /robot/joint_states
     void _on_joint_states(const sensor_msgs::JointState::ConstPtr&); //callback for /endpoint_state
+
     bool _in_range(std::vector<double>, bool); //checks if error < _allowed_error
-    void _limit_velocity(std::vector<double>&); //v = (v > _max_vel ? _max_vel : v)
-    void _limit_acceleration(std::vector<double>&, std::vector<double>, double); //ensures velocity not changing too fast
-    void _limit_velocities(JointVelocities&, std::vector<double>&);                  // removes velocity elements whose corresponding error is small
     
     const char* _max_error(std::vector<double>); //returns joint name and error of largest error
     
@@ -254,14 +255,15 @@ void BaxterLimb::Init()
     ros::Rate r(5);
     _set = false;
     // Resize vectors
-    _joint_angle.resize(numJoints, 0);
-    _joint_velocity.resize(numJoints, 0);
-    _joint_effort.resize(numJoints, 0);
-    _allowed_error.resize(numJoints, 0);
-    _max_velocity.resize(numJoints, 0);
-    _max_acceleration.resize(numJoints, 0);
-    _integral.resize(numJoints, 0);
-    _kdl_jointpositions.resize(numJoints);
+    _joint_angle.resize(NUMJOINTS, 0);
+    _joint_velocity.resize(NUMJOINTS, 0);
+    _joint_effort.resize(NUMJOINTS, 0);
+    _allowed_error.resize(NUMJOINTS, 0);
+    _max_velocity.resize(NUMJOINTS, 0);
+    _max_acceleration.resize(NUMJOINTS, 0);
+    _integral.resize(NUMJOINTS, 0);
+    _kdl_jointpositions.resize(NUMJOINTS);
+    _pid.resize(NUMJOINTS);
     KDL::SetToZero(_kdl_jointpositions);
     _set_names();
     
@@ -308,19 +310,19 @@ void BaxterLimb::Init()
     {
         //std::cout<<"Kdl constructor\n";
         int chain_joints = _chain.getNrOfJoints();
-        if (chain_joints != numJoints)
+        if (chain_joints != NUMJOINTS)
         {
             ROS_ERROR("The number of joints in the kinematic chain is incorrect. \
-             [%d] were expected, only [%d] were supplied.", numJoints, chain_joints);
+             [%d] were expected, only [%d] were supplied.", NUMJOINTS, chain_joints);
             _kdl_constructor = false;
             return;
         }
-        for(int j = 0; j < numJoints; j++)
+        for(int j = 0; j < NUMJOINTS; j++)
             _locked_joints.push_back(false);
         _eigen_endpoint = Eigen::VectorXd(6);
         _jacobian_solver = new KDL::ChainJntToJacSolver(_chain);
-        _jacobian.resize(numJoints);
-        KDL::JntArray jnts(numJoints);
+        _jacobian.resize(NUMJOINTS);
+        KDL::JntArray jnts(NUMJOINTS);
         KDL::SetToZero(jnts);
         ros::spinOnce();
         _kdl_set = true;
@@ -341,7 +343,7 @@ void BaxterLimb::_set_names()
 {
     // This is called during initalization to set joint names as well as default
     //  array values
-    for(int i = 0; i < numJoints; i++)
+    for(int i = 0; i < NUMJOINTS; i++)
     {
         _allowed_error[i] = 0.035; // ~2 degrees
         _joint_names[i] = _name+joint_ids[i];
@@ -365,7 +367,7 @@ void BaxterLimb::_on_joint_states(const sensor_msgs::JointState::ConstPtr& msg)
     double rate = 1.0/(now-_last_state_time).toSec();
     _state_rate = ((99.0*_state_rate) + rate)/100.0;
     _last_state_time = now;
-    for(int i = 0; i < numJoints; i++)
+    for(int i = 0; i < NUMJOINTS; i++)
     {
         int j = 0;
         while(msg->name[j] != _joint_names[i])
@@ -443,7 +445,7 @@ unsigned short BaxterLimb::state_rate()
 
 void BaxterLimb::set_allowable_error(std::vector<double> new_err)
 {
-    for(int i = 0; i < numJoints; i++)
+    for(int i = 0; i < NUMJOINTS; i++)
     {
         _allowed_error[i] = new_err[i];
     }
@@ -451,7 +453,7 @@ void BaxterLimb::set_allowable_error(std::vector<double> new_err)
 
 void BaxterLimb::set_allowable_error(double new_err)
 {
-    for(int i = 0; i < numJoints; i++)
+    for(int i = 0; i < NUMJOINTS; i++)
     {
         _allowed_error[i] = new_err;
     }
@@ -459,7 +461,7 @@ void BaxterLimb::set_allowable_error(double new_err)
 
 void BaxterLimb::set_max_velocity(std::vector<double> max)
 {
-    for(int i = 0; i < numJoints; i++)
+    for(int i = 0; i < NUMJOINTS; i++)
     {
         _max_velocity[i] = fabs(max[i]);
     }
@@ -467,7 +469,7 @@ void BaxterLimb::set_max_velocity(std::vector<double> max)
 
 void BaxterLimb::set_max_velocity(double max)
 {
-    for(int i = 0; i < numJoints; i++)
+    for(int i = 0; i < NUMJOINTS; i++)
     {
         _max_velocity[i] = fabs(max);
     }
@@ -475,7 +477,7 @@ void BaxterLimb::set_max_velocity(double max)
 
 void BaxterLimb::set_max_acceleration(std::vector<double> max)
 {
-    for(int i = 0; i < numJoints; i++)
+    for(int i = 0; i < NUMJOINTS; i++)
     {
         _max_acceleration[i] = fabs(max[i]);
     }
@@ -483,7 +485,7 @@ void BaxterLimb::set_max_acceleration(std::vector<double> max)
 
 void BaxterLimb::set_max_acceleration(double max)
 {
-    for(int i = 0; i < numJoints; i++)
+    for(int i = 0; i < NUMJOINTS; i++)
     {
         _max_acceleration[i] = fabs(max);
     }
@@ -511,7 +513,7 @@ void BaxterLimb::set_joint_velocities(JointVelocities velocity)
 
 void BaxterLimb::clear_integral()
 {
-    this->_integral.resize(numJoints, 0);
+    this->_integral.resize(NUMJOINTS, 0);
 }
 
 void BaxterLimb::reset_clock()
@@ -568,7 +570,7 @@ void BaxterLimb::set_joint_pid(std::string name, Gains gain)
     while(_joint_names[i] != name)
     {
         i++;
-        if(i >= numJoints)
+        if(i >= NUMJOINTS)
         {
             ROS_ERROR("Tried to set PID for unknown joint [%s]", name.c_str());
             return;
@@ -587,7 +589,7 @@ Gains BaxterLimb::get_joint_pid(std::string name)
     while(_joint_names[i] != name)
     {
         i++;
-        if(i >= numJoints)
+        if(i >= NUMJOINTS)
         {
             ROS_ERROR("Tried to get PID for unknown joint [%s]", name.c_str());
             return temp;
@@ -595,6 +597,11 @@ Gains BaxterLimb::get_joint_pid(std::string name)
     }
     
     return _pid[i];
+}
+
+std::vector<Gains> BaxterLimb::get_joint_pids()
+{
+    return _pid;
 }
 
 void BaxterLimb::set_endpoint_pid(Gains gain)
@@ -798,7 +805,7 @@ JointVelocities BaxterLimb::get_velocities(JointPositions desired)
 
     error = v_difference(position, joint_angles());
     output.velocities = compute_gains(error, integral, derivative, FAST);
-    _limit_velocity(output.velocities);
+    limit_velocity(output.velocities);
    
     return output;
 }
@@ -810,6 +817,7 @@ int BaxterLimb::set_velocities(JointPositions desired)
     std::vector<double> current = joint_angles();
     std::vector<double> error = v_difference(current, position);
     std::vector<double> derivative(position.size(),0);
+    std::vector<double> integral(position.size(),0);
     
     //desired.print("desired angles");
     JointVelocities output;
@@ -819,11 +827,11 @@ int BaxterLimb::set_velocities(JointPositions desired)
     error = v_difference(position, this->joint_angles());
     //v_print(error, "error");
     dt = ros::Time::now() - this->_lastSetVel;
-    this->_integral = v_sum(this->_integral, product(error, toSec(dt.nsec)));
-    v_print(this->_integral);
-    output.velocities = compute_gains(error, this->_integral, derivative, SLOW);
+    //this->_integral = v_sum(this->_integral, product(error, toSec(dt.nsec)));
+    //v_print(this->_integral);
+    output.velocities = compute_gains(error, integral, derivative, SLOW);
     output.print("velocities");
-    _limit_velocity(output.velocities);
+    limit_velocity(output.velocities);
     //output.print("limited velocities");
     set_joint_velocities(output);
     ros::spinOnce();
@@ -831,7 +839,7 @@ int BaxterLimb::set_velocities(JointPositions desired)
     return 1;
 }
 
-void BaxterLimb::_limit_velocity(std::vector<double> &vel)
+void BaxterLimb::limit_velocity(std::vector<double> &vel)
 {
     for(int i = 0; i < vel.size(); i++)
     {
@@ -839,7 +847,7 @@ void BaxterLimb::_limit_velocity(std::vector<double> &vel)
     }
 }
 
-void BaxterLimb::_limit_acceleration(std::vector<double> &vel, std::vector<double> last, double sec)
+void BaxterLimb::limit_acceleration(std::vector<double> &vel, std::vector<double> last, double sec)
 {
     double accel;
     for(int i = 0; i < last.size(); i++)
@@ -916,7 +924,7 @@ const char* BaxterLimb::_max_error(std::vector<double> err)
     return ss.str().c_str();
 }
 
-void BaxterLimb::_limit_velocities(JointVelocities& vel, std::vector<double>& err)
+void BaxterLimb::limit_velocities(JointVelocities& vel, std::vector<double>& err)
 {
     double eps = 0.0015;        // .1 deg precision
     for (int i = 0; i < vel.names.size(); i++)
@@ -961,22 +969,16 @@ void _reset_integral(std::vector<double> &integral, const std::vector<double> &e
 {
     for(int i = 0; i < integral.size(); i++)
     {
-        //std::cout<<"current error: "<<error[i];
-        //std::cout<<"  previous error: "<<previous_error[i];
-        //if error*prev_error < 0, error has flipped sign
-        //we will reset the integral term to prevent windup
+        // if error*prev_error < 0, error has flipped sign
+        // we will reset the integral term to prevent windup
         if(error[i]*previous_error[i] < 0)
-        {
             integral[i] = 0;
-            //std::cout<< "  ---RESET--- ";
-        }
-        //std::cout<<"\n";
     }
 }
 
 void to_vector(const gv::RPYPose &pose, Eigen::VectorXd &vec)
 {
-    // this converts a pose{x,y,z,p,r,y} to a vector 
+    // this converts a pose{x,y,z,r,p,y} to a vector 
     vec(0) = pose.position.x;
     vec(1) = pose.position.y;
     vec(2) = pose.position.z;
@@ -1061,7 +1063,7 @@ int BaxterLimb::set_jacobian_position(gv::RPYPose desired, ros::Duration timeout
         _saturate(integral, 0);
         derivative = quotient(v_difference(error, previous_error), toSec(dt.nsec));
         output.velocities = compute_gains(error, integral, derivative, FAST);
-        _limit_acceleration(output.velocities, last_vel, toSec(dt.nsec));
+        limit_acceleration(output.velocities, last_vel, toSec(dt.nsec));
         //output.print();
         set_joint_velocities(output);
         
@@ -1111,7 +1113,7 @@ int BaxterLimb::quickly_to_position(JointPositions desired, ros::Duration timeou
         derivative = quotient(v_difference(error, previous_error), toSec(dt.nsec));
         
         output.velocities = compute_gains(error, integral, derivative, FAST);
-        _limit_acceleration(output.velocities, last_vel, toSec(dt.nsec));
+        limit_acceleration(output.velocities, last_vel, toSec(dt.nsec));
         //v_print(joint_angles(), "current angles");
         
         set_joint_velocities(output);
@@ -1172,9 +1174,9 @@ int BaxterLimb::accurate_to_position(JointPositions desired, ros::Duration timeo
         //v_print(integral,"reset");
         derivative = quotient(v_difference(error, previous_error), toSec(dt.nsec));
         output.velocities = compute_gains(error, integral, derivative, SLOW);
-        _limit_acceleration(output.velocities, last_vel, toSec(dt.nsec));
+        limit_acceleration(output.velocities, last_vel, toSec(dt.nsec));
         output.names = desired.names;
-        //_limit_velocities(output, error);
+        //limit_velocities(output, error);
         //output.print();
         set_joint_velocities(output);
         
@@ -1362,7 +1364,7 @@ void BaxterLimb::lock_joints(std::vector<std::string> names)
 void BaxterLimb::unlock_joints()
 {
     // this unlocks all joints for KDL's jacobian solver
-    std::vector<bool> locked(numJoints, false);
+    std::vector<bool> locked(NUMJOINTS, false);
     _locked_joints = locked;
     int check = _jacobian_solver->setLockedJoints(_locked_joints);
     if (check < 0)
