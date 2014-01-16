@@ -1,11 +1,12 @@
 #include "baxterLimb.h"
+#include <thread>
 
 /*
  *      This class is intended to function as a more active velocity controller
  *      for Baxter's limbs when intense processing is being done
  * 
  *      Upon setting a new desired position, controller will actively command
- *      Baxter's arm towards its goal
+ *      Baxter's arm towards its goal in the background
  *
  */
 
@@ -18,23 +19,31 @@ public:
     BackgroundController(BaxterLimb*);
     ~BackgroundController();
     
-    void setBackgroundController(JointPositions);
-    void runBackgroundController();
-    void stopBackgroundController();
-    void resetBackgroundController();
+    void set(JointPositions);
+    void stop();
+    void reset();
     
     void setGainRatio(double);
     
 private:
     BackgroundController();
-    std::vector<double> _compute_gains();
     
     BaxterLimb* _limb;
     
-    bool _stop;
+    void runBackgroundController();
+    
+    // helps determine what thread functions should do
     bool _running;
+    bool _run;
 
+    // multiply all limb gains by this
     double _gainRatio;
+    
+    // threading
+    std::thread* _thread;
+    void _resetThread();
+    void _deleteThread();
+    void _runThread();
     
     // used to calculate, set joint velocities
     JointPositions _desired;  // desired position
@@ -50,6 +59,7 @@ private:
     std::vector<double> _last_vel;// = joint_velocities();
     std::vector<Gains> _gains;
     JointVelocities _output;
+    std::vector<double> _compute_output();    
 };
 
 BackgroundController::BackgroundController()
@@ -67,35 +77,43 @@ BackgroundController::BackgroundController(BaxterLimb* limb)
     _integral.resize(num, 0);
     _derivative.resize(num, 0);
     _last_vel.resize(num, 0);
-    _stop = false;
+    // we don't start running immediately
     _running = false;
+    _run = false;
     _gainRatio = .8;
+    //std::cout<<"basic setup complete\n";
+    // ensure thread starts at NULL
+    _thread = NULL;
 }
 
 BackgroundController::~BackgroundController()
 {
+    // tells limb to exit gracefully, deletes thread
     _limb->exit_control_mode();
+    _deleteThread();
 }
 
-void BackgroundController::setBackgroundController(JointPositions newGoal)
+void BackgroundController::set(JointPositions newGoal)
 {
-    // sets new goal, starts running controller if not running
-    int num = newGoal.angles.size();
-    if ( num != _integral.size() )
-    {
-        // resize if necessary
-        _previous_error.resize(num, 0);
-        _integral.resize(num, 0);
-        _derivative.resize(num, 0);
-        _last_vel.resize(num, 0);
-    }
-    // set new goal
-    _desired = newGoal;
-    _desired.print("desired position");
-    // run if not running
-    if (!_running) {
-        _running = true;
-        this->runBackgroundController();
+    // sets new goal, starts running controller on thread if not running
+    if ( ros::ok() ) {
+        int num = newGoal.angles.size();
+        if ( num != _integral.size() )
+        {
+            // resize if necessary
+            _previous_error.resize(num, 0);
+            _integral.resize(num, 0);
+            _derivative.resize(num, 0);
+            _last_vel.resize(num, 0);
+        }
+        // set new goal
+        _desired = newGoal;
+        _desired.print("desired position");
+        
+        // tell thread to run
+        _run = true;
+        if ( !_running )
+            _resetThread();
     }
 }
 
@@ -109,70 +127,73 @@ void printGains(std::vector<Gains> gains)
 
 void BackgroundController::runBackgroundController()
 {
-    //
-    _running = true;
+    //  calculates and sets joint velocities for _limb
+    
     ros::spinOnce();
+    //  setup
     _current = _limb->joint_angles();
     _position = _desired.angles;
     _error = v_difference(_position, _current);
-    //v_print(_error,"error");
     _gains = _limb->get_joint_pids();
-    //printGains(_gains);
-    
     _output.names = _desired.names;
     
-    // get dt
+    //  get dt, reset _last
     _dt = ros::Time::now() - _last;
-    //_dt.nsec = (toSec(_dt.nsec) < 1/hz ? toNsec(1/hz) : _dt.nsec);
     _last = ros::Time::now();
-    // calculate integral, derivative error
+    
+    //  calculate integral, derivative error
     _integral = v_sum(_integral, product(_error, toSec(_dt.nsec)));
     _saturate(_integral, .1);
     //_reset_integral(_integral, _error, _previous_error);
     _derivative = quotient(v_difference(_error, _previous_error), toSec(_dt.nsec));
-    // compute velocities from error, integral, derivative
-    //v_print(_error, "error");
-    _output.velocities = _compute_gains();
-    // limit acceleration
+    
+    //  compute velocities from error, integral, derivative
+    _output.velocities = _compute_output();
+   
+    //  limit acceleration, velocity
     _limb->limit_acceleration(_output.velocities, _last_vel, toSec(_dt.nsec));
+    
+    //  set output
     _limb->set_joint_velocities(_output);
     //v_print(_output.velocities);
+    
+    //  update for next call
     _last_vel = _output.velocities;
     _previous_error = _error;        
     
-    // sleep to keep rate constant
+    //  sleep to keep rate constant
     ros::Rate(_hz).sleep();
-    //_rate.sleep();
-    // if not asked to stop, loop
-    if ( !_stop && ros::ok() )
-        runBackgroundController();
-    else 
-    {
-        // stop running, reset stop command
+}
+
+void BackgroundController::stop()
+{
+    // gracefully stop the controller
+    if ( ros::ok() ) {
         _running = false;
-        _stop = false;
+        _run = false;
         _limb->exit_control_mode();
+        reset();
     }
 }
 
-void BackgroundController::stopBackgroundController()
+void BackgroundController::reset()
 {
-    _stop = true;
+    // resets error states tracked for pid controller
+    if ( ros::ok() ) {
+        int num = _desired.angles.size();
+        _previous_error.resize(num, 0);
+        _integral.resize(num, 0);
+        _derivative.resize(num, 0);
+        _last_vel.resize(num, 0);
+    }
 }
 
-void BackgroundController::resetBackgroundController()
+std::vector<double> BackgroundController::_compute_output()
 {
-    int num = _desired.angles.size();
-    _previous_error.resize(num, 0);
-    _integral.resize(num, 0);
-    _derivative.resize(num, 0);
-    _last_vel.resize(num, 0);
-}
-
-std::vector<double> BackgroundController::_compute_gains()
-{
-    std::vector<double> temp(_error.size(),0);
-    for(int i = 0; i < _error.size(); i++)
+    // calculates output signal from errors, gains
+    int len = _error.size();
+    std::vector<double> temp(len,0);
+    for(int i = 0; i < len; i++)
     {
         temp[i] = _error[i] * _gains[i].kp * _gainRatio;
         temp[i] += _integral[i] * _gains[i].ki * _gainRatio;
@@ -186,5 +207,40 @@ void BackgroundController::setGainRatio(double newRatio)
     _gainRatio = newRatio;
 }
 
+void BackgroundController::_resetThread()
+{
+    _deleteThread();
+    _thread = new std::thread(&BackgroundController::_runThread, this);
+}
+
+void BackgroundController::_deleteThread()
+{
+    // deletes thread, sets to null
+    if (_thread == NULL)
+        return;
+    // else
+    try{
+        _thread->join();
+    }
+    catch (std::system_error e) {
+        std::cout<<"Error joining thread on reset: "<<e.what()<<"\n";
+        //_thread->detach();
+    }
+    delete _thread;
+    _thread = NULL;
+}
+
+void BackgroundController::_runThread()
+{
+    _running = true;
+    while( _running && ros::ok() )
+    {
+        //std::cout<<"running thread";
+        if ( _run )
+            runBackgroundController();
+    }
+    _running = false;
+    _run = false;
+}
 
 #endif

@@ -1,4 +1,4 @@
-#include "baxterLimb.h"
+#include "backgroundController.h" // includes baxterLimb.h
 #include "searchgeometry.h"
 #include "objectClassifier.h"
 #include "nxtKit.h"
@@ -52,6 +52,7 @@ private:
     
     BaxterLimb* _right_hand;
     BaxterLimb* _left_hand;
+    BackgroundController* _right_controller;
     BaxterCamera* _right_cam;          // used to find objects in scene
     BaxterCamera* _left_cam;         // used to help control positioning of _right_cam
     ObjectClassifier* _classifier;
@@ -135,6 +136,7 @@ SearchControl::SearchControl(BaxterLimb* a, BaxterLimb* b, BaxterCamera* cam_a, 
     _left_hand = b;
     _right_cam = cam_a;
     _left_cam = cam_b;
+    _right_controller = new BackgroundController(_right_hand);
     _classifier = new ObjectClassifier("/home/ceeostud2/Pictures/ObjectTemplates/", 300);
     _state = 0;
     _reset_loc();
@@ -155,6 +157,7 @@ SearchControl::~SearchControl()
     delete _right_cam;
     delete _left_cam;*/
     delete _classifier;
+    delete _right_controller;
     delete _kit;
     //delete _blob_detector;
 }
