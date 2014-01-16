@@ -69,7 +69,7 @@ BackgroundController::BackgroundController(BaxterLimb* limb)
     _last_vel.resize(num, 0);
     _stop = false;
     _running = false;
-    _gainRatio = 0.8;
+    _gainRatio = .8;
 }
 
 BackgroundController::~BackgroundController()
@@ -127,8 +127,8 @@ void BackgroundController::runBackgroundController()
     _last = ros::Time::now();
     // calculate integral, derivative error
     _integral = v_sum(_integral, product(_error, toSec(_dt.nsec)));
-    _saturate(_integral, .2);
-    _reset_integral(_integral, _error, _previous_error);
+    _saturate(_integral, .1);
+    //_reset_integral(_integral, _error, _previous_error);
     _derivative = quotient(v_difference(_error, _previous_error), toSec(_dt.nsec));
     // compute velocities from error, integral, derivative
     //v_print(_error, "error");
@@ -136,7 +136,7 @@ void BackgroundController::runBackgroundController()
     // limit acceleration
     _limb->limit_acceleration(_output.velocities, _last_vel, toSec(_dt.nsec));
     _limb->set_joint_velocities(_output);
-    
+    //v_print(_output.velocities);
     _last_vel = _output.velocities;
     _previous_error = _error;        
     
