@@ -35,10 +35,20 @@ public:
     std::vector<std::string> names; 
     std::vector<double> angles; 
     JointPositions() {}
+    JointPositions(int size, int val)
+    {
+        this->names.resize(size, "");
+        this->angles.resize(size, val);
+    }
     JointPositions(std::vector<std::string> _n, std::vector<double> _a)
     {
         this->names = _n;
         this->angles = _a;
+    }
+    JointPositions(const JointPositions &a)
+    {
+        this->names = a.names;
+        this->angles = a.angles;
     }
     JointPositions(const Eigen::VectorXd& rhs)
     {
@@ -76,6 +86,17 @@ public:
         }
         return *this;
     }
+    JointPositions& operator-=(const JointPositions &a)
+    {
+        int size = this->angles.size();
+        for(int i = 0; i < size; i++)
+            this->angles[i] -= a.angles[i];
+        return *this;
+    }
+    JointPositions& operator-(const JointPositions &a)
+    {
+        return JointPositions(*this) -= a;
+    }
     void print()
     {
         for (int i = 0; i < names.size(); i++)
@@ -101,6 +122,14 @@ public:
         }
         ROS_ERROR("The joint [%s] is not a member of this class", joint.c_str());
         return -PI*2;
+    }
+    JointPositions abs() const
+    {
+        int size = this->angles.size();
+        JointPositions jp(size, 0);
+        for(int i = 0; i < size; i++)
+            jp.angles[i] = fabs(this->angles[i]);
+        return jp;
     }
 private:
 };

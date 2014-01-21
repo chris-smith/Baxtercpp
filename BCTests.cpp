@@ -1,4 +1,5 @@
 #include "backgroundController.h"
+#include "baxterCam.h"
 
 void setup_pid(BaxterLimb&);
 
@@ -6,33 +7,41 @@ int main(int argc, char** argv) {
     ros::init(argc, argv, "Background_Controller_Test");
     
     BaxterLimb limb("right");
-    BackgroundController bc(&limb);
+    BackgroundController* bc = new BackgroundController(&limb);
+    BaxterCamera cam("right_hand_camera");
+    cam.display();
+    bc->start();
     
     setup_pid(limb);
-    
+    std::cout<<"you should see \"running thread\" now\n";
+    //ros::Duration(10).sleep();
     JointPositions jp = limb.joint_positions();
     std::vector<double> pos(NUMJOINTS, 0);
     pos[0] = PI/4;
     jp.angles = pos;
-    bc.set(jp);
+    bc->set(jp);
     
-    ros::Duration(5).sleep();
-    
-    //while( ros::ok() )
+    ros::Time start = ros::Time::now();
+    ros::Rate r(10);
+    while( ros::Time::now() - start < ros::Duration(3) ){
     //    ros::spinOnce();
-    
-    bc.stop();
+        std::cout<<"threading worked\n";
+        r.sleep();
+        ros::spinOnce();
+    }
+    ros::Duration(5).sleep();
+    bc->stop();
     std::cout<<"Stopped limb\n";
     //BaxterLimb newLimb("right");
     ros::Duration(5).sleep();
     std::cout<<"starting limb\n";
-    bc.set(jp);
+    bc->set(jp);
     ros::Duration(2).sleep();
     jp.angles[6] = PI/4;
-    bc.set(jp);
+    bc->set(jp);
     ros::Duration(2).sleep();
     //std::cout<<""
-    bc.stop();
+    bc->stop();
     std::cout<<"final limb stop\n";
     
     limb.joint_positions().print("Final Positions");

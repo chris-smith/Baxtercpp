@@ -152,6 +152,7 @@ public:
     int set_velocities(JointPositions);
     void clear_integral();              // clears integral term used in set_joint_velocities()
     void reset_clock();                   // update _lastSetVel
+    void wait_for_arrival(const JointPositions, ros::Duration);
     
     bool in_range(std::vector<double>);
     std::vector<double> compute_gains(std::vector<double>, std::vector<double>, std::vector<double>, bool);
@@ -519,6 +520,22 @@ void BaxterLimb::clear_integral()
 void BaxterLimb::reset_clock()
 {
     this->_lastSetVel = ros::Time::now();
+}
+
+void BaxterLimb::wait_for_arrival(const JointPositions jp, ros::Duration timeout = 3)
+{
+    // wait until limb has arrived at specified joint positions
+    // or until timeout
+    ros::Time start = ros::Time::now();
+    std::vector<double> error = ( this->joint_positions() - jp ).abs().angles;
+    ros::Rate r(100);
+    while ( !in_range(error) || (ros::Time::now() - start < timeout) ){
+        r.sleep();
+        ros::spinOnce();
+        error = ( this->joint_positions() - jp ).abs().angles;
+    }
+    if ( !in_range(error) )
+        ROS_ERROR("Failed to arrive at the specified positions within %u.%u seconds", timeout.sec, timeout.nsec);
 }
 
 void BaxterLimb::set_joint_efforts(JointEfforts effort)

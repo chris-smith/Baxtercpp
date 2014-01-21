@@ -137,6 +137,7 @@ SearchControl::SearchControl(BaxterLimb* a, BaxterLimb* b, BaxterCamera* cam_a, 
     _right_cam = cam_a;
     _left_cam = cam_b;
     _right_controller = new BackgroundController(_right_hand);
+    _right_controller->start();
     _classifier = new ObjectClassifier("/home/ceeostud2/Pictures/ObjectTemplates/", 300);
     _state = 0;
     _reset_loc();
@@ -276,6 +277,8 @@ void SearchControl::_init_search()
     //   This is controlled ON Baxter, not by me
     _right_hand->set_command_timeout(0.5);
     pos.print("Starting Position");
+    JointPositions jp = _right_hand->get_simple_positions(pos.position, 0);
+    _right_controller->set( jp );
     _right_hand->set_simple_positions(pos.position, 0, timeout);
     _right_hand->gripper->open();
     ros::spinOnce();
@@ -297,6 +300,8 @@ void SearchControl::_init_search()
     _gripping = false;
     _blob_area = 0; 
     _right_hand->set_joint_position_speed(.1);
+    _right_hand->wait_for_arrival( jp, ros::Duration(5) );
+    _right_controller->stop();
     std::cout<<"Search Initialized\n";
 }
 
@@ -355,7 +360,7 @@ void SearchControl::_remove_grippers()
     cv::add(zeros, scene, scene);
     cv::imshow("mask add", scene);
     
-    cv::waitKey(500);
+    cv::waitKey(50);
 }
 
 void SearchControl::_search()
@@ -391,6 +396,7 @@ void SearchControl::_move_to_piece()
         // if at piece, stop moving, _state = 2;
         _state = 3; //state = 2
         std::cout<<"arrived at object";
+        _right_controller->stop();
         _right_hand->clear_integral();
         _right_hand->exit_control_mode();
         return;
@@ -565,6 +571,7 @@ bool _in_range(const gv::Point &err, const double &thresh)
 void SearchControl::_lower(const double stop_height)
 {
     // tracks the object down until it reaches stop_height
+    _right_controller->reset();
     _right_hand->set_joint_position_speed(.03);
     float rotation = 1;
     cv::RotatedRect rect;
@@ -599,7 +606,7 @@ void SearchControl::_lower(const double stop_height)
             rect = cv::minAreaRect(blob);
             rectArea = rect.size.height*rect.size.width;
             percentArea = area/rectArea;
-            std::cout<<"Percent Area: " << percentArea<<"\n";
+            //std::cout<<"Percent Area: " << percentArea<<"\n";
             rectRatio = rect.size.height/rect.size.width;
             // assume object has a regular shaped
             //  -- square, circular, rectangular, etc
@@ -620,16 +627,16 @@ void SearchControl::_lower(const double stop_height)
             error.x = centroid.x - scene_width/2; 
             error.y = centroid.y - scene_height/2;
             error.z = 0;
-            error.print("pixel error");
+            //error.print("pixel error");
             error.y /= scene_height;
             error.x /= scene_width; 
             // maybe too noisy?
             //error.y *= 1.05;
             integral_error += error*toSec(dt.nsec);
             //integral_error *= ki;
-            integral_error.print("integral error");
+            //integral_error.print("integral error");
             error += integral_error*ki;
-            error.print("error");
+            //error.print("error");
             cv::Point2f rect_points[4];
             rect.points(rect_points);
             for(int j = 0; j < 4; j++)
@@ -637,7 +644,7 @@ void SearchControl::_lower(const double stop_height)
                 line(scene, rect_points[j], rect_points[(j+1)%4], cv::Scalar(255,0,0),1,8);
             }
             cv::imshow("Rotated Rectangle", scene);
-            cv::waitKey(10);
+            cv::waitKey(30);
             
             // Rotation angle is always negative
             rotation = rect.angle; //this is in degrees
@@ -674,8 +681,8 @@ void SearchControl::_lower(const double stop_height)
             double yaw = pose.rpy.yaw;
             height = pose.position.z;
             _transform(error, yaw, height-geometry.table_height);
-            error.print("transformed error");
-            std::cout<<"yaw: "<<yaw<<" height: "<<height<<"  stop height: "<<stop_height<<"\n";
+            //error.print("transformed error");
+            //std::cout<<"yaw: "<<yaw<<" height: "<<height<<"  stop height: "<<stop_height<<"\n";
             error.z = height - stop_height;
             if(height > stop_height)
                 error.z = .05;
@@ -690,6 +697,7 @@ void SearchControl::_lower(const double stop_height)
         }
         //error.z = pose.position.z - geometry.table_height;    
     }
+    _right_controller->stop();
     _right_hand->exit_control_mode();
     std::cout<<"LOWER COMPLETE\n";
     //pose.print();
@@ -750,7 +758,7 @@ bool SearchControl::_object()
     }
     else
         return false;
-    cv::waitKey(10);
+    cv::waitKey(30);
     return true;
 }
 
@@ -776,7 +784,7 @@ bool SearchControl::_object(cv::Rect bounds)
     }
     else
         return false;
-    cv::waitKey(10);
+    cv::waitKey(30);
     return true;
 }
 
@@ -1033,22 +1041,23 @@ void SearchControl::_endpoint_control(gv::Point err, double w2)
 {
     if(!ros::ok())
         return;
-    //std::cout<<"endpoint position"<<std::endl;
+    std::cout<<"endpoint control"<<std::endl;
     ros::spinOnce();
     gv::RPYPose pose = geometry.home;
     pose.position = _right_hand->endpoint_pose().position;
-    pose.position.print("current position");
+    //pose.position.print("current position");
     //err.print("Error");
     pose.position -= err;
     //pose.position.z = this->geometry.home.position.z;
-    pose.position.print("desired position");
-    _right_hand->joint_positions().print("current angles");
+    //pose.position.print("desired position");
+    //_right_hand->joint_positions().print("current angles");
     JointPositions desired = _right_hand->get_simple_positions(pose.position,w2);
-    desired.print("desired angles");
+    //desired.print("desired angles");
     if(desired.angles.empty())
         return;
+    _right_controller->set(desired);
     //_right_hand->set_joint_positions(desired);
-    _right_hand->set_velocities(desired);
+    //_right_hand->set_velocities(desired);
     //_right_hand->exit_control_mode();
 }
 
@@ -1232,14 +1241,14 @@ void SearchControl::_transform(gv::Point &err, double yaw, double range)
     double tempx,tempy;
     // height_ratio is not linear,constant with range
     //  maybe develop a better model...
-    std::cout<<"range: "<<range;
+    //std::cout<<"range: "<<range;
     if (range > .08){
-        std::cout<<" is *large*\n";
+        //std::cout<<" is *large*\n";
         tempy = err.y * height_ratio * range;
         tempx = err.x * width_ratio * range;
     }
     else{
-        std::cout<<" is *small*\n";
+        //std::cout<<" is *small*\n";
         tempy = err.y * 2.28 * range;
         tempx = err.x * 3.648 * range;
     }

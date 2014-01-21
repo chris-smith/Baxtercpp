@@ -1,5 +1,5 @@
 #include "baxterLimb.h"
-#include <thread>
+#include "thread.h"
 
 /*
  *      This class is intended to function as a more active velocity controller
@@ -13,15 +13,32 @@
 #ifndef BACKGROUND_CONTROLLER_H
 #define BACKGROUND_CONTROLLER_H
 
-class BackgroundController 
+class BackgroundController : public Thread
 {
 public:
     BackgroundController(BaxterLimb*);
     ~BackgroundController();
     
+    virtual void *run() {
+        _running = true;
+        ros::Rate r(_hz);
+        while( _running && ros::ok() )
+        {
+            //std::cout<<"running thread "<<this->self()<<" ";
+            if ( _run )
+                runBackgroundController();
+            r.sleep();
+            ros::spinOnce();
+        }
+        _running = false;
+        _run = false;
+    }
+    
     void set(JointPositions);
     void stop();
     void reset();
+    virtual int join();
+    virtual int detach();
     
     void setGainRatio(double);
     
@@ -40,10 +57,10 @@ private:
     double _gainRatio;
     
     // threading
-    std::thread* _thread;
+    /*std::thread* _thread;
     void _resetThread();
     void _deleteThread();
-    void _runThread();
+    void _runThread();*/
     
     // used to calculate, set joint velocities
     JointPositions _desired;  // desired position
@@ -80,17 +97,34 @@ BackgroundController::BackgroundController(BaxterLimb* limb)
     // we don't start running immediately
     _running = false;
     _run = false;
-    _gainRatio = .8;
+    _gainRatio = .2;
     //std::cout<<"basic setup complete\n";
     // ensure thread starts at NULL
-    _thread = NULL;
+    //_thread = NULL;
+    //this->start();
 }
 
 BackgroundController::~BackgroundController()
 {
     // tells limb to exit gracefully, deletes thread
     _limb->exit_control_mode();
-    _deleteThread();
+    this->join();
+    //_deleteThread();
+}
+
+int BackgroundController::join() 
+{
+    // stops thread from running loop, joins thread
+    _running = false;
+    _run = false;
+    return Thread::join();
+}
+
+int BackgroundController::detach()
+{
+    // allows thread to run
+    _running = true;
+    return Thread::detach();
 }
 
 void BackgroundController::set(JointPositions newGoal)
@@ -108,12 +142,12 @@ void BackgroundController::set(JointPositions newGoal)
         }
         // set new goal
         _desired = newGoal;
-        _desired.print("desired position");
+        //_desired.print("desired position");
         
         // tell thread to run
         _run = true;
-        if ( !_running )
-            _resetThread();
+        //if ( !_running )
+          //this->start();
     }
 }
 
@@ -160,16 +194,13 @@ void BackgroundController::runBackgroundController()
     //  update for next call
     _last_vel = _output.velocities;
     _previous_error = _error;        
-    
-    //  sleep to keep rate constant
-    ros::Rate(_hz).sleep();
 }
 
 void BackgroundController::stop()
 {
     // gracefully stop the controller
     if ( ros::ok() ) {
-        _running = false;
+        //_running = false;
         _run = false;
         _limb->exit_control_mode();
         reset();
@@ -206,7 +237,7 @@ void BackgroundController::setGainRatio(double newRatio)
 {
     _gainRatio = newRatio;
 }
-
+/*
 void BackgroundController::_resetThread()
 {
     _deleteThread();
@@ -241,6 +272,6 @@ void BackgroundController::_runThread()
     }
     _running = false;
     _run = false;
-}
+}*/
 
 #endif
