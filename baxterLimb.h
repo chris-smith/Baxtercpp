@@ -726,7 +726,7 @@ JointPositions BaxterLimb::get_simple_positions(gv::Point pt, const double w2)
     return jp;
 }
 
-void BaxterLimb::set_simple_positions(gv::Point pt, double w2, ros::Duration timeout)
+void BaxterLimb::set_simple_positions(gv::Point pt, double w2, ros::Duration timeout=ros::Duration(5) )
 {
     JointPositions jp;
     //pt.print("position");
@@ -847,7 +847,7 @@ int BaxterLimb::set_velocities(JointPositions desired)
     //this->_integral = v_sum(this->_integral, product(error, toSec(dt.nsec)));
     //v_print(this->_integral);
     output.velocities = compute_gains(error, integral, derivative, SLOW);
-    output.print("velocities");
+    //output.print("velocities");
     limit_velocity(output.velocities);
     //output.print("limited velocities");
     set_joint_velocities(output);
@@ -895,9 +895,9 @@ std::vector<double> BaxterLimb::compute_gains(std::vector<double> error, std::ve
     else{
         for(int i = 0; i < error.size(); i++)
         {
-            temp[i] = error[i]*_pid[i].kp/2;
-            temp[i] += integral[i]*_pid[i].ki/2;
-            temp[i] += derivative[i]*_pid[i].kd/2;
+            temp[i] = error[i]*_pid[i].kp/3;
+            temp[i] += integral[i]*_pid[i].ki/3;
+            temp[i] += derivative[i]*_pid[i].kd/3;
         }
     }
     return temp;

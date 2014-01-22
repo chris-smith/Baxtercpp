@@ -19,7 +19,7 @@ int main(int argc, char** argv) {
     std::cout<<"Setting up right cam...\n";
     right_cam.resolution(Resolution(320,200));
     right_cam.half_resolution(false);
-    right_cam.window(Resolution(535,220)); // (570, 150)
+    right_cam.window(Resolution(560,190)); // (570, 150)
     right_cam.gain(15);
     right_cam.exposure(10);
     

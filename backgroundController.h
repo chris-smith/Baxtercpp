@@ -17,6 +17,7 @@ class BackgroundController : public Thread
 {
 public:
     BackgroundController(BaxterLimb*);
+    BackgroundController(std::string);
     ~BackgroundController();
     
     virtual void *run() {
@@ -44,6 +45,7 @@ public:
     
 private:
     BackgroundController();
+    void _setup();
     
     BaxterLimb* _limb;
     
@@ -87,9 +89,21 @@ BackgroundController::BackgroundController()
 BackgroundController::BackgroundController(BaxterLimb* limb)
 {
     _limb = limb;
+    _setup();
+}
+
+BackgroundController::BackgroundController(std::string side)
+{
+    _limb = new BaxterLimb(side);
+    _setup();
+    
+}
+
+void BackgroundController::_setup()
+{
     _hz = 100;
     // size vectors appropriately
-    int num = limb->joint_angles().size();
+    int num = _limb->joint_angles().size();
     _previous_error.resize(num, 0);
     _integral.resize(num, 0);
     _derivative.resize(num, 0);

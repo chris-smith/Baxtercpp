@@ -14,8 +14,10 @@ public:
     NxtKit(cv::RotatedRect, double);
     cv::RotatedRect get_coordinates(std::string);
     double height();
+    gv::Point origin();
     
     void show_parts();
+    void show_containers();
     
     bool contains(std::string); // checks if the kit contains the named part
 
@@ -24,10 +26,12 @@ private:
     
     void _setup_containers();
     cv::RotatedRect _to_rect(cv::Point2f, cv::Size2f);
+    cv::RotatedRect _to_global(Container);
     
     cv::RotatedRect _box;
     gv::Point _origin;                  //  x, y position shared with _box
     std::vector<Container> _containers; //  positions relative to origin of box
+    double _angle;                      //  yaw of box
 
 };
 
@@ -41,6 +45,8 @@ NxtKit::NxtKit(cv::RotatedRect rect, double height)
     _origin.x = points[0].x;
     _origin.y = points[0].y;
     _origin.z = height;
+    _origin.print("NXT Kit Origin");
+    _angle = rect.angle*PI/180;
     _setup_containers();
 }
 
@@ -199,6 +205,13 @@ void NxtKit::show_parts()
     }
 }
 
+void NxtKit::show_containers()
+{
+    std::cout<<"\n";
+    for(int i = 0; i < _containers.size(); i++)
+        std::cout << _containers[i].rect.center << "\n";
+}
+
 cv::RotatedRect NxtKit::_to_rect(cv::Point2f origin, cv::Size2f size)
 {
     cv::RotatedRect rect;
@@ -216,10 +229,26 @@ cv::RotatedRect NxtKit::get_coordinates(std::string part_name)
         for(int j = 0; j < _containers[i].objects.size(); j++)
         {
             if(part_name == _containers[i].objects[j])
-                return _containers[i].rect;
+                return _to_global( _containers[i] );
         }
     }
     return cv::RotatedRect(cv::Point2f(-1,-1), cv::Size2f(-1,-1), 0);
+}
+
+cv::RotatedRect NxtKit::_to_global(Container container) 
+{
+    // returns coordinates of container relative to Baxter
+    std::cout<<" rect center "<<container.rect.center<<"\n";
+    double xTemp = container.rect.center.x;
+    double yTemp = container.rect.center.y;
+    double x = cos(_angle)*xTemp - sin(_angle)*yTemp;
+    double y = - sin(_angle)*xTemp - cos(_angle)*xTemp;
+    std::cout<<" relative -- "<<x<<" "<<y<<"\n";
+    x += _origin.x;
+    y += _origin.y;
+    container.rect.center = cv::Point2f(x,y);
+    
+    return container.rect;
 }
 
 bool NxtKit::contains(std::string part_name) 
@@ -240,3 +269,7 @@ double NxtKit::height()
     return _origin.z;
 }
 
+gv::Point NxtKit::origin()
+{
+    return _origin;
+}

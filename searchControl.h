@@ -52,12 +52,14 @@ private:
     
     BaxterLimb* _right_hand;
     BaxterLimb* _left_hand;
-    BackgroundController* _right_controller;
+    //BackgroundController* _right_controller;
     BaxterCamera* _right_cam;          // used to find objects in scene
     BaxterCamera* _left_cam;         // used to help control positioning of _right_cam
     ObjectClassifier* _classifier;
     NxtKit* _kit;
     //cv::SimpleBlobDetector* _blob_detector;
+    
+    ros::AsyncSpinner* _spinner;
     
     cv::Mat whole_scene;
     
@@ -136,9 +138,14 @@ SearchControl::SearchControl(BaxterLimb* a, BaxterLimb* b, BaxterCamera* cam_a, 
     _left_hand = b;
     _right_cam = cam_a;
     _left_cam = cam_b;
-    _right_controller = new BackgroundController(_right_hand);
-    _right_controller->start();
+    //_right_controller = new BackgroundController(_right_hand);
+    ////_right_controller->start();
     _classifier = new ObjectClassifier("/home/ceeostud2/Pictures/ObjectTemplates/", 300);
+    _kit = new NxtKit( cv::RotatedRect(cv::Point2f(0.52,-0.57), cv::Size2f(.38,.275), -35 ), .1);
+    _kit->show_containers();
+    cv::waitKey(3000);
+    //_spinner = new ros::AsyncSpinner(2);
+    //_spinner->start();
     _state = 0;
     _reset_loc();
     _reset_roi();
@@ -157,8 +164,9 @@ SearchControl::~SearchControl()
     delete _left_hand;
     delete _right_cam;
     delete _left_cam;*/
+    //_spinner->stop();
     delete _classifier;
-    delete _right_controller;
+    //delete _right_controller;
     delete _kit;
     //delete _blob_detector;
 }
@@ -276,9 +284,13 @@ void SearchControl::_init_search()
     // if arm doesn't receive a command for 0.5 seconds, will disable
     //   This is controlled ON Baxter, not by me
     _right_hand->set_command_timeout(0.5);
-    pos.print("Starting Position");
+    pos.print("Starting Endpoint Position");
     JointPositions jp = _right_hand->get_simple_positions(pos.position, 0);
-    _right_controller->set( jp );
+    //_right_controller->set( jp );
+    pos.position.z += .05;
+    _right_hand->set_simple_positions(pos.position, 0, timeout);
+    _right_hand->set_simple_positions(_kit->origin(), 0, timeout);
+    pos.position.z -= .05;
     _right_hand->set_simple_positions(pos.position, 0, timeout);
     _right_hand->gripper->open();
     ros::spinOnce();
@@ -295,13 +307,14 @@ void SearchControl::_init_search()
     y: -0.514911105068
     z: -0.0697321340386
     */
-    cv::RotatedRect nxtkit(cv::Point2f(-.22869,-.71439),cv::Size2f(.38,.27),-54.15);
-    _kit = new NxtKit(nxtkit,-.065);
+    //cv::RotatedRect nxtkit(cv::Point2f(-.22869,-.71439),cv::Size2f(.38,.27),-54.15);
+    //_kit = new NxtKit(nxtkit,-.065);
     _gripping = false;
     _blob_area = 0; 
     _right_hand->set_joint_position_speed(.1);
     _right_hand->wait_for_arrival( jp, ros::Duration(5) );
-    _right_controller->stop();
+    gv::RPYPose( _right_hand->endpoint_pose() ).position.print("Current Endpoint Position");
+    //_right_controller->stop();
     std::cout<<"Search Initialized\n";
 }
 
@@ -374,6 +387,8 @@ void SearchControl::_search()
     }
     else{
         cv::imshow("scene", _right_cam->cvImage());
+        cv::waitKey(30);
+        ros::spinOnce();
         _right_hand->exit_control_mode();
         // Find new location to search
     }
@@ -389,14 +404,14 @@ void SearchControl::_move_to_piece()
     // err is pixel difference between centroid of object and center of image;
     err.x = _obj_loc.x - scene_width/2; 
     err.y = _obj_loc.y - scene_height/2;
-    std::cout<<"error"<<err.x<<" "<<err.y<<"\n";
+    //std::cout<<"error"<<err.x<<" "<<err.y<<"\n";
     gv::Point temp = abs(err);
     if (temp < allowable_error)
     {
         // if at piece, stop moving, _state = 2;
-        _state = 3; //state = 2
+        _state = 2; //state = 2
         std::cout<<"arrived at object";
-        _right_controller->stop();
+        //_right_controller->stop();
         _right_hand->clear_integral();
         _right_hand->exit_control_mode();
         return;
@@ -420,7 +435,7 @@ void SearchControl::_move_to_piece()
     // transform dimensionless error into approx distance error
     
     _transform(err, yaw, height-geometry.table_height);
-    _last_err.print("last error");
+    //_last_err.print("last error");
     // pseudo integral term
     //  if err*last_err > 0, steady state error is building
     if (err.x*_last_err.x > 0)
@@ -428,7 +443,7 @@ void SearchControl::_move_to_piece()
     if  (err.y*_last_err.y > 0)
         err.y += _last_err.y*.5;
     
-    err.print("error");
+    //err.print("error");
     //cv::waitKey(500);
     //err.z = 0.005;
     /*std::cout<<"y position: " << _obj_loc.y;
@@ -454,7 +469,12 @@ void SearchControl::_verify_piece()
 
     std::cout<<"What piece is this?\n";
     std::cin>>_found_piece;
+    
     _state = 3; // Ignore validation for now, go straight to picking up
+    if ( !_kit->contains(_found_piece) ){
+        _state = 0;
+        ROS_ERROR( "%s is an unknown piece", _found_piece.c_str() );
+    }
 }
 
 void SearchControl::_grab_piece()
@@ -497,15 +517,22 @@ void SearchControl::_grab_piece()
     bool gripped = _right_hand->gripper->state.gripping;
     if (gripped)
         ROS_INFO("GRABBED PIECE CORRECTLY");
+    else
+        ROS_INFO("Failed to grab piece");
     _right_hand->set_joint_position_speed(0.15);
-    pos.z += .1;
-    _right_hand->set_simple_positions(pos, 0.0, tout);
-    _right_hand->gripper->go_to(100);
-    
-    // set internal state. 4 -> deposit piece, 0 -> look for piece
+    pos.z = _kit->height() + .1;
+    pos.print("desired position");
+    _right_hand->set_simple_positions(pos, 0.0, ros::Duration(10) );
+    //_right_hand->gripper->go_to(100);
+    gv::RPYPose(_right_hand->endpoint_pose()).position.print("actual position");
+    // set internal state. 
+    //   4 -> deposit piece 
+    //   0 -> look for piece
     _state = 4;
-    if (!gripped)
+    if (!gripped) {
         _state = 0;
+        _right_hand->gripper->go_to(100);
+    }
     
     return;
 }
@@ -514,11 +541,6 @@ void SearchControl::_deposit_piece()
 {
     //  _state == 4
     //  Deposit grabbed piece in NxtKit
-    if (!_right_hand->gripper->state.gripping && !_gripping){
-        ROS_ERROR("Failed to grab the piece");
-        _state = 0;
-        return;
-    }
     
     // Get Coordinates of dropoff
     cv::RotatedRect container = _kit->get_coordinates(_found_piece);
@@ -527,11 +549,21 @@ void SearchControl::_deposit_piece()
         _state = 0;
         return;
     }
+    std::cout<<"container :" << container.center <<"\n--------\n";
     _right_hand->gripper->block = true;
     //cv::Point dropoff_pt = container.center;
     gv::RPYPose dropoff;
-    dropoff.position = container.center;
-    dropoff.position.print("Deposit location");
+    gv::Point dropoff_pt;
+    dropoff_pt.x = container.center.x;
+    dropoff_pt.y = container.center.y;
+    dropoff_pt.z = _kit->height();
+    //dropoff.position = container.center;
+    dropoff_pt.print("Deposit location");
+    cv::waitKey(3000);
+    _right_hand->set_simple_positions( dropoff_pt, 0, ros::Duration(15) );
+    gv::RPYPose(_right_hand->endpoint_pose()).position.print("actual deposit");
+    ros::Duration(1).sleep();
+    _right_hand->gripper->go_to(100);
     _state = 0;
     return;
     dropoff.position.z = _kit->height() + .005;
@@ -571,7 +603,7 @@ bool _in_range(const gv::Point &err, const double &thresh)
 void SearchControl::_lower(const double stop_height)
 {
     // tracks the object down until it reaches stop_height
-    _right_controller->reset();
+    //_right_controller->reset();
     _right_hand->set_joint_position_speed(.03);
     float rotation = 1;
     cv::RotatedRect rect;
@@ -632,10 +664,10 @@ void SearchControl::_lower(const double stop_height)
             error.x /= scene_width; 
             // maybe too noisy?
             //error.y *= 1.05;
-            integral_error += error*toSec(dt.nsec);
+            //integral_error += error*toSec(dt.nsec);
             //integral_error *= ki;
             //integral_error.print("integral error");
-            error += integral_error*ki;
+            //error += integral_error*ki;
             //error.print("error");
             cv::Point2f rect_points[4];
             rect.points(rect_points);
@@ -643,8 +675,8 @@ void SearchControl::_lower(const double stop_height)
             {
                 line(scene, rect_points[j], rect_points[(j+1)%4], cv::Scalar(255,0,0),1,8);
             }
-            cv::imshow("Rotated Rectangle", scene);
-            cv::waitKey(30);
+            cv::imshow("scene", scene);
+            cv::waitKey(50);
             
             // Rotation angle is always negative
             rotation = rect.angle; //this is in degrees
@@ -683,7 +715,7 @@ void SearchControl::_lower(const double stop_height)
             _transform(error, yaw, height-geometry.table_height);
             //error.print("transformed error");
             //std::cout<<"yaw: "<<yaw<<" height: "<<height<<"  stop height: "<<stop_height<<"\n";
-            error.z = height - stop_height;
+            error.z = 0;//height - stop_height;
             if(height > stop_height)
                 error.z = .05;
             //std::cout<<"rotation: "<<rotation<<"\n";
@@ -697,7 +729,7 @@ void SearchControl::_lower(const double stop_height)
         }
         //error.z = pose.position.z - geometry.table_height;    
     }
-    _right_controller->stop();
+    //_right_controller->stop();
     _right_hand->exit_control_mode();
     std::cout<<"LOWER COMPLETE\n";
     //pose.print();
@@ -708,35 +740,43 @@ void SearchControl::_dropToTable(JointPositions jp)
     ros::Duration(1).sleep();
     double speed = 0.01;
     //_right_hand->set_joint_position_speed();
+    ros::spinOnce();
     const geometry_msgs::Vector3 startForce(_right_hand->endpoint_effort().force);
     geometry_msgs::Vector3 endpointForce;
-    ros::Rate r(10);
+    ros::Rate r(100);
     gv::RPYPose pose;
+    double height;
     while ( ros::ok() )
     {
-        _right_hand->set_joint_position_speed(speed);
-        _right_hand->set_joint_positions(jp);
+        //_right_hand->set_joint_position_speed(speed);
+        //_right_hand->set_joint_positions(jp);
+        _right_hand->set_velocities(jp);
         ros::spinOnce();
         endpointForce = _right_hand->endpoint_effort().force;
-        std::cout<<endpointForce<<"\n";
+        //std::cout<<endpointForce<<"\n";
         pose = _right_hand->endpoint_pose();
-        pose.position.print("position");
-        r.sleep();
+        //pose.position.print("position");
         // if it's reached the table from height
-        if (pose.position.z - geometry.table_height < 0.005)
+        height = pose.position.z - geometry.table_height;
+        if (height < 0.002)
         {
             std::cout<<"I should stop from height\n";
             break;
         }
         // it's running into something -- z force is negative
-        if (endpointForce.z < 3*startForce.z)
+        if (endpointForce.z < 5*startForce.z)
         {
-            std::cout<<"I should stop from force\n";
-            break;
+            //std::cout<<"I should stop from force\n";
+            //break;
         }
-        // slowly increase speed
-        speed *= 1.05;
+        std::cout<<height<<","<<pose.position.x<<","<<pose.position.y;
+        std::cout<<","<<pose.position.z<<"\n";
+        // slowly decrease speed
+        speed /= 1.05;
+        r.sleep();
     }
+    ros::spinOnce();
+    _right_hand->exit_control_mode();
 }
 
 bool SearchControl::_object()
@@ -929,7 +969,7 @@ std::vector<cv::Point> SearchControl::_getBlob(cv::Mat& scene, cv::Rect search_b
         }
     }
     //std::cout<<"blob area: "<<largest_area<<"\n";
-    cv::imshow("blob", thresh);
+    //cv::imshow("blob", thresh);
     if (largest_area < min_area)
     {
         return temp;
@@ -963,6 +1003,9 @@ std::vector<cv::Point> SearchControl::_getBlob(cv::Mat& scene)
                                              cv::Size(2*sz+1, 2*sz+1),
                                              cv::Point(sz, sz) );
     cv::erode(thresh, thresh, element); 
+    //element = getStructuringElement( type, (3,3) );
+    cv::morphologyEx(thresh, thresh, cv::MORPH_CLOSE, cv::Mat() );
+    cv::morphologyEx(thresh, thresh, cv::MORPH_CLOSE, cv::Mat() );
     
     std::vector< std::vector< cv::Point > > contours;
     std::vector< cv::Vec4i > hierarchy;
@@ -984,13 +1027,17 @@ std::vector<cv::Point> SearchControl::_getBlob(cv::Mat& scene)
         }
     }
     //std::cout<<"blob area: "<<largest_area<<"\n";
-    cv::imshow("blob", thresh);
+    //cv::imshow("blob", thresh);
     if (largest_area < min_area)
     {
         return temp;
     }
+    // get convexHull of contour -- just outer edges
+    std::vector<cv::Point> hull;
+    convexHull(contours[largest_contour_index], hull, false, true);
     
-    return contours[largest_contour_index];
+    return hull;
+    //return contours[largest_contour_index];
 }
 
 bool SearchControl::_track_object()
@@ -1055,9 +1102,9 @@ void SearchControl::_endpoint_control(gv::Point err, double w2)
     //desired.print("desired angles");
     if(desired.angles.empty())
         return;
-    _right_controller->set(desired);
+    ////_right_controller->set(desired);
     //_right_hand->set_joint_positions(desired);
-    //_right_hand->set_velocities(desired);
+    _right_hand->set_velocities(desired);
     //_right_hand->exit_control_mode();
 }
 
