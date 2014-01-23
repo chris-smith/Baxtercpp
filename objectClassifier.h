@@ -18,9 +18,12 @@ public:
     void match();
     void save_scene();                // prompts user to save scene in specified directory
     void save_scene(std::string);
+    
+    bool _is_circle(std::vector< cv::Point >);
 private:
     ObjectClassifier();
     
+    // variables
     cv::Mat _scene;
     DIR* _db_dir;
     bool _valid_path;
@@ -52,6 +55,11 @@ private:
     
     // Matcher setup
     void _train_matcher();      // extracts descriptors for each object in provided path
+
+    // Try to match specific shapes
+    double _dist(cv::Point2f, cv::Point2f);
+    //bool _is_circle(std::vector< cv::Point >);
+    
 };
 
 ObjectClassifier::ObjectClassifier(std::string path)
@@ -562,5 +570,41 @@ std::vector<std::string> ObjectClassifier::_get_files_names()
     return names;
 }
 
+bool ObjectClassifier::_is_circle(std::vector< cv::Point > blob)
+{
+    int size = blob.size();
+    // get center of blob
+    int x = 0;
+    int y = 0;
+    for( int i = 0; i < size; i++ )
+    {
+        x += blob[i].x;
+        y += blob[i].y;
+    }
+    x /= size;
+    y /= size;
+    cv::Point2f pt(x,y);
+    // get distances from blob to center
+    std::vector< double > dist(size, 0);
+    for (int i = 0; i < size; i++)
+    {
+        dist[i] = _dist(pt, blob[i]);
+    }
+    // statistics on distances
+    double sum = std::accumulate( dist.begin(), dist.end(), 0.0 );
+    double mean = sum / size;
+    
+    std::vector<double> diff(size);
+    std::transform( dist.begin(), dist.end(), diff.begin(),
+                    std::bind2nd( std::minus<double>(), mean ) );
+    double sq_sum = std::inner_product( diff.begin(), diff.end(), diff.begin(), 0.0 );
+    double stdev = std::sqrt( sq_sum / (size - 1) );
+    std::cout<<"mean: "<<mean<<"  stddev: "<< stdev<<"\n";
+    return false;
+}
 
+double ObjectClassifier::_dist(cv::Point2f b, cv::Point2f a)
+{
+    return std::sqrt( pow((b.x - a.x), 2) + pow((b.y - a.y), 2) );
+}
 

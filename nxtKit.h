@@ -14,6 +14,7 @@ public:
     NxtKit(cv::RotatedRect, double);
     cv::RotatedRect get_coordinates(std::string);
     double height();
+    double angle();
     gv::Point origin();
     
     void show_parts();
@@ -241,8 +242,8 @@ cv::RotatedRect NxtKit::_to_global(Container container)
     std::cout<<" rect center "<<container.rect.center<<"\n";
     double xTemp = container.rect.center.x;
     double yTemp = container.rect.center.y;
-    double x = cos(_angle)*xTemp - sin(_angle)*yTemp;
-    double y = - sin(_angle)*xTemp - cos(_angle)*xTemp;
+    double x = cos(-_angle)*xTemp - sin(-_angle)*yTemp;
+    double y = -sin(-_angle)*xTemp - cos(-_angle)*yTemp;
     std::cout<<" relative -- "<<x<<" "<<y<<"\n";
     x += _origin.x;
     y += _origin.y;
@@ -272,4 +273,9 @@ double NxtKit::height()
 gv::Point NxtKit::origin()
 {
     return _origin;
+}
+
+double NxtKit::angle()
+{
+    return _angle;
 }

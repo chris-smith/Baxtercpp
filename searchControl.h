@@ -104,6 +104,7 @@ private:
     cv::Point2f _best_gripping_location(std::vector<cv::Point>);
     bool _on_edge(std::vector<cv::Point> blob);
     void _remove_grippers();            // finds grippers in test image for removal later
+    bool _breakLower(cv::RotatedRect, double);
     
     //Search variables
     cv::Point2d _obj_loc;                                //  location of found object in _object()
@@ -141,7 +142,7 @@ SearchControl::SearchControl(BaxterLimb* a, BaxterLimb* b, BaxterCamera* cam_a, 
     //_right_controller = new BackgroundController(_right_hand);
     ////_right_controller->start();
     _classifier = new ObjectClassifier("/home/ceeostud2/Pictures/ObjectTemplates/", 300);
-    _kit = new NxtKit( cv::RotatedRect(cv::Point2f(0.52,-0.57), cv::Size2f(.38,.275), -35 ), .1);
+    _kit = new NxtKit( cv::RotatedRect(cv::Point2f(0.58,-0.61), cv::Size2f(.38,.275), -35 ), .1);
     _kit->show_containers();
     cv::waitKey(3000);
     //_spinner = new ros::AsyncSpinner(2);
@@ -192,6 +193,7 @@ void SearchControl::search()
     scene_height = _right_cam->height();
     scene_width = _right_cam->width();
     ros::Rate r(20);
+    //_state = 2;
     std::cout<<"state: ";
     switch(_state)
     {
@@ -229,7 +231,7 @@ void SearchControl::search()
         default:
             //Shouldn't happen
             ROS_ERROR("_state has been set to an unknown value");
-            _state = 0;  //should this happen??
+            _state = 0; 
             break;
     }
     std::cout<<std::endl;
@@ -288,8 +290,8 @@ void SearchControl::_init_search()
     JointPositions jp = _right_hand->get_simple_positions(pos.position, 0);
     //_right_controller->set( jp );
     pos.position.z += .05;
-    _right_hand->set_simple_positions(pos.position, 0, timeout);
-    _right_hand->set_simple_positions(_kit->origin(), 0, timeout);
+    //_right_hand->set_simple_positions(pos.position, 0, timeout);
+    //_right_hand->set_simple_positions(_kit->origin(), 0, timeout);
     pos.position.z -= .05;
     _right_hand->set_simple_positions(pos.position, 0, timeout);
     _right_hand->gripper->open();
@@ -389,7 +391,7 @@ void SearchControl::_search()
         cv::imshow("scene", _right_cam->cvImage());
         cv::waitKey(30);
         ros::spinOnce();
-        _right_hand->exit_control_mode();
+        //_right_hand->exit_control_mode();
         // Find new location to search
     }
     
@@ -515,23 +517,24 @@ void SearchControl::_grab_piece()
     
     // Check if holding object -- unreliable
     bool gripped = _right_hand->gripper->state.gripping;
-    if (gripped)
+    if (gripped) {
         ROS_INFO("GRABBED PIECE CORRECTLY");
-    else
+        _right_hand->set_joint_position_speed(0.15);
+        pos.z = _kit->height() + .1;
+        pos.print("desired position");
+        _right_hand->set_simple_positions(pos, 0.0, ros::Duration(10) );
+        //_right_hand->gripper->go_to(100);
+        gv::RPYPose(_right_hand->endpoint_pose()).position.print("actual position");
+        // set internal state. 
+        //   4 -> deposit piece 
+        //   0 -> look for piece
+        _state = 4;
+    }
+    else {
         ROS_INFO("Failed to grab piece");
-    _right_hand->set_joint_position_speed(0.15);
-    pos.z = _kit->height() + .1;
-    pos.print("desired position");
-    _right_hand->set_simple_positions(pos, 0.0, ros::Duration(10) );
-    //_right_hand->gripper->go_to(100);
-    gv::RPYPose(_right_hand->endpoint_pose()).position.print("actual position");
-    // set internal state. 
-    //   4 -> deposit piece 
-    //   0 -> look for piece
-    _state = 4;
-    if (!gripped) {
         _state = 0;
         _right_hand->gripper->go_to(100);
+        _right_hand->set_simple_positions(geometry.home.position, 0);
     }
     
     return;
@@ -559,11 +562,14 @@ void SearchControl::_deposit_piece()
     dropoff_pt.z = _kit->height();
     //dropoff.position = container.center;
     dropoff_pt.print("Deposit location");
-    cv::waitKey(3000);
-    _right_hand->set_simple_positions( dropoff_pt, 0, ros::Duration(15) );
-    gv::RPYPose(_right_hand->endpoint_pose()).position.print("actual deposit");
+    double w2 = PI * _kit->angle() / 180;
+    w2 += PI/2;
+    _right_hand->set_simple_positions( dropoff_pt, w2, ros::Duration(15) );
+    //gv::RPYPose(_right_hand->endpoint_pose()).position.print("actual deposit");
     ros::Duration(1).sleep();
     _right_hand->gripper->go_to(100);
+    ros::Duration(1).sleep();
+    _right_hand->set_simple_positions( geometry.home.position, 0, ros::Duration(5) );
     _state = 0;
     return;
     dropoff.position.z = _kit->height() + .005;
@@ -720,6 +726,12 @@ void SearchControl::_lower(const double stop_height)
                 error.z = .05;
             //std::cout<<"rotation: "<<rotation<<"\n";
             _endpoint_control(error, w2); //takes in error, w2 angle
+            if ( _breakLower(rect, height-geometry.table_height) ) {
+                if ( fabs(rotation) < 0.02 ) {
+                    std::cout<<"break out of lower loop";
+                    break;
+                }
+            }
             ros::spinOnce();
             pose = _right_hand->endpoint_pose();
         }
@@ -733,6 +745,38 @@ void SearchControl::_lower(const double stop_height)
     _right_hand->exit_control_mode();
     std::cout<<"LOWER COMPLETE\n";
     //pose.print();
+}
+
+bool SearchControl::_breakLower(cv::RotatedRect rect, double height)
+{
+    // tries to determine if the object bounding by rect is close enough to the
+    // center of the image given the height over table
+    std::cout<<"height "<<height<<"\n";
+    
+    // only break if at most 5cm above table
+    if (height > .03)
+        return false;
+    
+    double x = scene_width / 2;
+    double y = scene_height / 2;
+    double xDiff = x - rect.center.x;
+    double yDiff = y - rect.center.y;
+    double dist = std::sqrt( pow( xDiff, 2) + pow( yDiff, 2) );
+    // false if pixel distance is too large
+    std::cout<<"dist "<<dist<<" ";
+    if (dist > 40)
+        return false;
+    else if (dist < 5)
+        return true;
+    // grippers are fairly robust to yDiff
+    if (3*xDiff < rect.size.width)
+        return true;
+    
+    // come up with some tunable algorithm for scenarios where
+    //  we can blind drop -- skinny pieces can be off in x more
+    double ratio = dist/height; // height in m
+    std::cout<<" ratio "<<ratio<<"\n";
+    return false;
 }
 
 void SearchControl::_dropToTable(JointPositions jp)
@@ -758,15 +802,15 @@ void SearchControl::_dropToTable(JointPositions jp)
         //pose.position.print("position");
         // if it's reached the table from height
         height = pose.position.z - geometry.table_height;
-        if (height < 0.002)
+        if (height < 0.003)
         {
             std::cout<<"I should stop from height\n";
             break;
         }
         // it's running into something -- z force is negative
-        if (endpointForce.z < 5*startForce.z)
+        if (endpointForce.z < -15)
         {
-            //std::cout<<"I should stop from force\n";
+            std::cout<<"I should stop from force\n";
             //break;
         }
         std::cout<<height<<","<<pose.position.x<<","<<pose.position.y;
@@ -788,6 +832,7 @@ bool SearchControl::_object()
     std::vector<cv::Point> blob = _getBlob(scene);
     if (!blob.empty())
     {
+        //_classifier->_is_circle(blob);
         _bounding_rect = _get_bounds(blob);
         _rotated_rect = cv::minAreaRect(blob);
         _obj_loc = _rotated_rect.center;
