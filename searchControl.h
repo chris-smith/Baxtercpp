@@ -194,38 +194,38 @@ void SearchControl::search()
     scene_width = _right_cam->width();
     ros::Rate r(20);
     //_state = 2;
-    std::cout<<"state: ";
+    //std::cout<<"state: ";
     switch(_state)
     {
         case 0:
             //  Searching, move around in bounding box
             //  obj found ? _state = 1 : _state = _state
-            std::cout<<"0";
+            //std::cout<<"0";
             _search();
             break;
         case 1:
             //  Found something, move over
             //  obj in bounds ? _state = 2 : state = 0
-            std::cout<<"1";
+            //std::cout<<"1";
             _tracking = true;
             _move_to_piece();
             break;
         case 2:
             //  Verify piece
             //  known piece ? _state = 3 : _state = 0
-            std::cout<<"2";
+            //std::cout<<"2";
             _verify_piece();
             break;
         case 3:
             //  Grab piece
             //  piece grabbed ? _state = 4 : _state = 3
-            std::cout<<"3";
+            //std::cout<<"3";
             _grab_piece();
             break;
         case 4:
             //  Move over deposit box, deposit piece
             //  move over, piece released -> _state = 0
-            std::cout<<"4";
+            //std::cout<<"4";
             _deposit_piece();
             break;
         default:
@@ -234,7 +234,7 @@ void SearchControl::search()
             _state = 0; 
             break;
     }
-    std::cout<<std::endl;
+    //std::cout<<std::endl;
     ros::spinOnce();
 }
 
@@ -385,7 +385,7 @@ void SearchControl::_search()
     //                        else,         keep looking
     if(_object()) {
         _state = 1;
-        _right_hand->reset_clock();
+        //_right_hand->reset_clock();
     }
     else{
         cv::imshow("scene", _right_cam->cvImage());
@@ -460,6 +460,14 @@ void SearchControl::_move_to_piece()
     err.z = height-geometry.home.position.z;
     _endpoint_control(err,0);
     _last_err = err;
+    
+    if( _object() )
+        _state = 1; // stays the same
+    else {
+        _state = 0;
+        ros::spinOnce();
+        _right_hand->exit_control_mode();
+    }
 }
 
 void SearchControl::_verify_piece()
@@ -510,7 +518,7 @@ void SearchControl::_grab_piece()
     _right_hand->set_simple_positions(pos, w2_, tout);
     
     //  Grip object, pause
-    _right_hand->gripper->go_to(5);
+    _right_hand->gripper->go_to(2);
     ros::Duration pause(1);
     pause.sleep();
     ros::spinOnce();
@@ -653,6 +661,7 @@ void SearchControl::_lower(const double stop_height)
             if ( (rectRatio > 0.9) && (rectRatio < 1.1) )
             {
                 // object is pretty square, don't rotate
+                //  for lego kits this largely means its circular
                 std::cout<<"object is square\n";
                 rect.angle = 0;
             }
@@ -876,41 +885,36 @@ bool SearchControl::_object(cv::Rect bounds)
 cv::Point2f SearchControl::_best_gripping_location(std::vector<cv::Point> blob)
 {
     // attempts to determine the best gripping location for provided blob
-    //  if blob is relatively square (non convex), will return the center
-    //  of blob's bounding rectangle
-    
-    int max_height = 0;
-    int min_width = scene_width;
-    double area = cv::contourArea(blob, false);
-    cv::RotatedRect rect = cv::minAreaRect(blob);
-    double rectArea = rect.size.height*rect.size.width;
-    double percentArea = area/rectArea;
-    std::cout<<"Percent Area: " << percentArea<<"\n";
-    double rectRatio = rect.size.height/rect.size.width;
-    if ( (rectRatio > 0.9) && (rectRatio < 1.1) )
+    //  to be used with irregular blobs
+//    std::vector< cv::Vec2f > lines;
+    std::vector< cv::Vec4i > lines;
+    cv::Point line_origin;
+    int size = blob.size();
+    double slope;
+    double last_slope = 0;
+    double slope_ratio;
+    cv::Point pt = blob[0];
+    bool first = true;
+    for(int i = 1; i < size; i++)
     {
-        // object is pretty square
+        slope = ( blob[i].y - pt.y ) / ( blob[i].x - pt.x );
+        pt = blob[i];
+        if (first) {
+            last_slope = slope;
+            first = false;
+            line_origin = blob[i];
+        }
+        slope_ratio = slope / last_slope;
+        if (slope_ratio > 0.9 && slope_ratio < 1.1) {
+            // this is basically the same slope
+            
+        }
+        else {
+            // the line seems to be turning
+            
+        }
     }
-    if (percentArea > .75)
-    {
-        // the object is fairly rectangular, just grab it at the default location
-        std::cout<<"object is pretty square\n";
-        return rect.center;
-    }
-    // temporary while working on grip location algorithm
-    return rect.center;
     
-    
-    std::vector<cv::Vec4i> defects;
-    std::vector<int> hull;
-    convexHull(blob, hull, false, false);
-    if (hull.size() > 2)
-        convexityDefects(blob, hull, defects);
-    for(int i = 0; i < defects.size(); i++)
-    {
-        std::cout<<"convexity: "<<defects[i].depth<<"\n";
-    }
-    return cv::Point2f();
 }
 
 bool SearchControl::_on_edge(std::vector<cv::Point> blob)
