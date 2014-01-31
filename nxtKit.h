@@ -69,11 +69,12 @@ void NxtKit::_setup_containers()
     _container.rect = _to_rect(cv::Point2f(.015,.095), cv::Size2f(.08,.08));
     objs.push_back("4211775");
     objs.push_back("4210857");
-    objs.push_back("4512363");
+    objs.push_back("4512363");  // I think this part doesn't exist
     objs.push_back("4121667");
     objs.push_back("4210655");
     objs.push_back("4107783");
-    objs.push_back("4296059");
+    objs.push_back("4296059");  // I think this part doesn't exist
+    objs.push_back("4113805");
     _container.objects = objs;
     _containers.push_back(_container);
     objs.clear();

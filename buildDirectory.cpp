@@ -12,6 +12,7 @@ void remove_grippers();
 void setClassifierImage(int&);
 std::vector<cv::Point> getBlob(cv::Mat);
 cv::Rect get_bounds(std::vector<cv::Point>);
+void setup_pid(BaxterLimb&);
 
 int main(int argc, char** argv) {
     ros::init(argc, argv, "Cam_Test");
@@ -24,12 +25,15 @@ int main(int argc, char** argv) {
     std::string part_name;
     remove_grippers();
     right_cam->display();
+    gv::Point pos;
+    JointPositions jp;
     
     std::cout << "Press 'h' to see command options\n";
     
     int key;
     int padding = 0;  // padding on subimage rectangle for object
-    
+    ros::Duration tout(.5);
+    ros::spinOnce();
     while ( ros::ok() ){
         key = cv::waitKey(50);
         switch(key) {
@@ -79,6 +83,7 @@ int main(int argc, char** argv) {
             case 'r':
                 remove_grippers();
                 break;
+                
             default:
                 setClassifierImage(padding);
                 if (!object.empty()) {
@@ -89,6 +94,7 @@ int main(int argc, char** argv) {
                     cv::imshow("object", image);
                     classifier->scene( image );
                 }
+                //pos = limb.endpoint_pose().position;
                 if (key > 0)
                     std::cout<<"unknown key: "<<key<<"\n";
                 break;
@@ -270,4 +276,20 @@ cv::Rect get_bounds(std::vector<cv::Point> contour)
     }
     return cv::Rect(bounds[0], bounds[1]);
     //return _restrict(bounds, scene_height, scene_width);
+}
+
+void setup_pid(BaxterLimb& limb)
+{
+    limb.set_joint_pid("right_w2", (Gains){3.5, .5, 0.1}); //6
+    limb.set_joint_pid("right_w1", (Gains){4, .5, 0.05});
+    limb.set_joint_pid("right_w0", (Gains){3.5, .1, 0.002});
+    limb.set_joint_pid("right_e1", (Gains){3.5, .1, 0.15});
+    limb.set_joint_pid("right_e0", (Gains){3.25, .1, 0.002});
+    limb.set_joint_pid("right_s1", (Gains){2, .03, 0.05});
+    limb.set_joint_pid("right_s0", (Gains){2.25, .4, 0.015}); //0
+    limb.set_allowable_error(0.008);
+    limb.set_max_velocity(1.5);
+    limb.set_max_acceleration(30);
+    Gains epGains(.6,.25,.05);
+    //limb.set_endpoint_pid(epGains);
 }

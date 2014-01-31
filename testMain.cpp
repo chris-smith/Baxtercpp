@@ -87,7 +87,7 @@ int main(int argc, char** argv) {
     endpt = right_arm.endpoint_pose();
     endpt.print("right endpoint");*/
     SearchControl search_control(&right_arm, &left_arm, &right_cam, &left_cam);
-    search_control.geometry.table_height = -.064;
+    search_control.geometry.table_height = -.072;
     search_control.geometry.height_offset = .12;
     search_control.geometry.home = right_arm.endpoint_pose();
     while( ros::ok() )
@@ -98,14 +98,14 @@ int main(int argc, char** argv) {
 void setup_pid(BaxterLimb& left, BaxterLimb& right)
 {
     left.set_joint_pid("left_w2", (Gains){3.25, 0.2, 0.004}); //6
-    left.set_joint_pid("left_w1", (Gains){2.25, 0.08, 0.002});
+    left.set_joint_pid("left_w1", (Gains){2.75, 0.08, 0.002});
     left.set_joint_pid("left_w0", (Gains){2.25, 0.08, 0.002});
     left.set_joint_pid("left_e1", (Gains){1.75, 0.08, 0.002});
     left.set_joint_pid("left_e0", (Gains){1.75, 0.08, 0.002});
     left.set_joint_pid("left_s1", (Gains){1.5, 0.05, 0.002});
     left.set_joint_pid("left_s0", (Gains){1.5, 0.05, 0.002}); //0
     left.set_allowable_error(0.015);
-    left.set_max_velocity(1.2);
+    left.set_max_velocity(.5);
     left.set_max_acceleration(70);
     
     // taken from BCTests.cpp
@@ -117,7 +117,7 @@ void setup_pid(BaxterLimb& left, BaxterLimb& right)
     right.set_joint_pid("right_s1", (Gains){2, .03, 0.05});
     right.set_joint_pid("right_s0", (Gains){2.25, .4, 0.015}); //0
     right.set_allowable_error(0.008);
-    right.set_max_velocity(.2);
+    right.set_max_velocity(.5);
     right.set_max_acceleration(20);
     Gains epGains(.6,.25,.05);
     //right.set_endpoint_pid(epGains);

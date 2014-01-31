@@ -15,7 +15,8 @@ public:
     ObjectClassifier(std::string, int);         // _min_hessian
     
     void scene(const cv::Mat&);       //set the image to search through
-    void match();
+    std::string match();
+    std::string match(const cv::Mat&);
     void save_scene();                // prompts user to save scene in specified directory
     void save_scene(std::string);
     
@@ -291,7 +292,13 @@ void ObjectClassifier::_train_matcher()
     std::cout<<"Training Complete!\n";
 }
 
-void ObjectClassifier::match()
+std::string ObjectClassifier::match(const cv::Mat& scene)
+{
+    this->scene(scene);
+    return this->match();
+}
+
+std::string ObjectClassifier::match()
 {
     int max = 0;
     int maxIndex;
@@ -364,10 +371,11 @@ void ObjectClassifier::match()
         //     cv::imshow("Match", temp);
         //cv::waitKey(1000);
         //cv::destroyWindow("Match");
+        return _db_image_types[maxIndex];
     }
     else{
         std::cout<<"I'm not sure what I'm seeing in this picture right now...\n";
-        ;//_save_image();   
+        return "";//_save_image();   
     }
     
 }

@@ -103,8 +103,9 @@ private:
     double _getBlobArea();
     cv::Point2f _best_gripping_location(std::vector<cv::Point>);
     bool _on_edge(std::vector<cv::Point> blob);
-    void _remove_grippers();            // finds grippers in test image for removal later
+    void _remove_grippers(double);            // finds grippers in test image for removal later
     bool _breakLower(cv::RotatedRect, double);
+    bool _visionGrabCheck();
     
     //Search variables
     cv::Point2d _obj_loc;                                //  location of found object in _object()
@@ -122,6 +123,7 @@ private:
     double _blob_area;
     cv::Mat _gripper_mask;
     cv::Mat _bgra_gripper_mask;
+    cv::Mat _closed_gripper_mask;
     std::string _found_piece;
     gv::Point _last_err;                                // last error in _move_to_piece
 };
@@ -296,7 +298,8 @@ void SearchControl::_init_search()
     _right_hand->set_simple_positions(pos.position, 0, timeout);
     _right_hand->gripper->open();
     ros::spinOnce();
-    _remove_grippers();
+    _remove_grippers(0);
+    _remove_grippers(100);
     //std::cout<<"Grippers Masked\n";
     //_blob_detector = new cv::SimpleBlobDetector();
     //_blob_detector->create("SimpleBlob");
@@ -311,6 +314,7 @@ void SearchControl::_init_search()
     */
     //cv::RotatedRect nxtkit(cv::Point2f(-.22869,-.71439),cv::Size2f(.38,.27),-54.15);
     //_kit = new NxtKit(nxtkit,-.065);
+    _right_hand->gripper->open();
     _gripping = false;
     _blob_area = 0; 
     _right_hand->set_joint_position_speed(.1);
@@ -320,25 +324,28 @@ void SearchControl::_init_search()
     std::cout<<"Search Initialized\n";
 }
 
-void SearchControl::_remove_grippers()
+void SearchControl::_remove_grippers(double gripperPosition)
 {
     // This creates a mask for the open gripper state.
     //   Should possibly be extended to build mask for closed gripper state??
     
+    std::cout<< "Try to mask gripper at position: "<< gripperPosition << "\n";
     // if no objects are found, grippers must not be in scene
     if (!_object())
         return;
     
     // move to open position
     _right_hand->gripper->block = true;
-    _right_hand->gripper->go_to(100);
+    _right_hand->gripper->go_to(gripperPosition);
+    //ros::Duration(2).sleep();
     std::vector<cv::Point> blob;
+    ros::spinOnce();
     cv::Mat scene = _right_cam->cvImage();
     if (scene.empty()){
         // This could cause an infinite loop if the cameras 
         //  aren't working correctly
         ROS_ERROR("Empty scene :/");
-        _remove_grippers();
+        _remove_grippers(gripperPosition);
     }
     cv::Mat mask;
     int type = cv::MORPH_ELLIPSE;
@@ -362,11 +369,14 @@ void SearchControl::_remove_grippers()
     cv::dilate(mask, mask, element);
     
     // set mask
-    _gripper_mask = mask;
-    if(_right_hand->gripper->state.position > 90)
+    if(_right_hand->gripper->state.position > 90) {
         ROS_INFO("Set mask for open position");
-    else
+        _gripper_mask = mask;
+    }
+    else {
         ROS_INFO("Set mask for closed position");
+        _closed_gripper_mask = mask;
+    }
     
     // show what mask looks like
     cv::Mat zeros;
@@ -476,11 +486,19 @@ void SearchControl::_verify_piece()
     //   This should reference _classifier to figure out which piece is in view
     //     Should verify that piece exists in NXTKit
     //   While testing, may ask for piece name, rather than referencing classifier
-
-    std::cout<<"What piece is this?\n";
-    std::cin>>_found_piece;
     
-    _state = 3; // Ignore validation for now, go straight to picking up
+    // try to automatically match piece
+    cv::Mat scene = _right_cam->cvImage()(_bounding_rect);
+    _found_piece = _classifier->match(scene);
+    if (_found_piece == "") {
+        // couldn't identify piece, query user
+        std::cout<<"What piece is this?\n";
+        // read in part name
+        std::cin>>_found_piece;
+    }
+    else
+        std::cout<<"I found "<<_found_piece<<"\n";
+    _state = 3;
     if ( !_kit->contains(_found_piece) ){
         _state = 0;
         ROS_ERROR( "%s is an unknown piece", _found_piece.c_str() );
@@ -518,13 +536,14 @@ void SearchControl::_grab_piece()
     _right_hand->set_simple_positions(pos, w2_, tout);
     
     //  Grip object, pause
-    _right_hand->gripper->go_to(2);
+    _right_hand->gripper->go_to(0.2);
     ros::Duration pause(1);
     pause.sleep();
     ros::spinOnce();
     
     // Check if holding object -- unreliable
     bool gripped = _right_hand->gripper->state.gripping;
+    //_visionGrabCheck();
     if (gripped) {
         ROS_INFO("GRABBED PIECE CORRECTLY");
         _right_hand->set_joint_position_speed(0.15);
@@ -541,8 +560,8 @@ void SearchControl::_grab_piece()
     else {
         ROS_INFO("Failed to grab piece");
         _state = 0;
-        _right_hand->gripper->go_to(100);
         _right_hand->set_simple_positions(geometry.home.position, 0);
+        _right_hand->gripper->go_to(100);
     }
     
     return;
@@ -580,29 +599,48 @@ void SearchControl::_deposit_piece()
     _right_hand->set_simple_positions( geometry.home.position, 0, ros::Duration(5) );
     _state = 0;
     return;
-    dropoff.position.z = _kit->height() + .005;
-    dropoff.rpy = gv::RPY(0, 3.14, 1.57);
-    ros::Duration timeout(5);
-    int moved = _right_hand->set_service_position_quick(dropoff, timeout);
-    if (moved < 0){
-        ROS_ERROR("Unable to move to dropoff location");
-        _state = 0;
+}
+
+bool SearchControl::_visionGrabCheck(){
+    // tries to check baxter's current image against
+    //  _closed_gripper_mask
+    ros::spinOnce();
+    cv::Mat scene = _right_cam->cvImage();
+    std::vector<cv::Point> temp(0,cv::Point(0,0));
+    if (scene.empty())
+    {
+        //ROS_ERROR("Image to search is empty");
+        return false;
     }
-    if (!_right_hand->gripper->state.gripping && !_gripping){
-        ROS_ERROR("Dropped the piece on route");
-        _state = 0;
-        return;
+    cv::Mat thresh;
+    try {
+        cv::cvtColor(scene, thresh, CV_BGR2GRAY);
     }
-    ros::Duration quickTimeout(1.5);
-    _right_hand->set_simple_positions(dropoff.position, 0.0, quickTimeout);
-    _right_hand->gripper->go_to(100);
-    //return to search area
-    ros::Rate delay(1);
-    delay.sleep();
-    _right_hand->set_service_position_quick(geometry.home, timeout);
-    _state = 0;
-    _right_hand->gripper->block = false;
-    // If he drops the piece while moving to the box, turn his head light to RED
+    catch (cv::Exception) {
+        ROS_ERROR("Unable to convert image to greyscale");
+        return false;
+    }
+    cv::threshold(thresh, thresh,100,255,cv::THRESH_BINARY_INV);
+    thresh = thresh - _closed_gripper_mask;
+    int type = cv::MORPH_ELLIPSE;
+    int sz = 1;
+    cv::Mat element = getStructuringElement( type,
+                                             cv::Size(2*sz+1, 2*sz+1),
+                                             cv::Point(sz, sz) );
+    cv::erode(thresh, thresh, element); 
+    //element = getStructuringElement( type, (3,3) );
+    cv::morphologyEx(thresh, thresh, cv::MORPH_CLOSE, cv::Mat() );
+    cv::morphologyEx(thresh, thresh, cv::MORPH_CLOSE, cv::Mat() );
+    
+    //show image
+    cv::imshow("visionCheck", thresh);
+    /*  
+     *  After seeing image, there's not enough differentiation between
+     *  closed with small object and closed with no object to be able
+     *  to distinguish. So this is probably not useful...
+     */
+    //cv::waitKey(50);
+    
 }
 
 bool _in_range(const gv::Point &err, const double &thresh)
@@ -618,7 +656,7 @@ void SearchControl::_lower(const double stop_height)
 {
     // tracks the object down until it reaches stop_height
     //_right_controller->reset();
-    _right_hand->set_joint_position_speed(.03);
+    //_right_hand->set_joint_position_speed(.1);
     float rotation = 1;
     cv::RotatedRect rect;
     cv::Mat scene;
@@ -760,7 +798,7 @@ bool SearchControl::_breakLower(cv::RotatedRect rect, double height)
 {
     // tries to determine if the object bounding by rect is close enough to the
     // center of the image given the height over table
-    std::cout<<"height "<<height<<"\n";
+    //std::cout<<"height "<<height<<"\n";
     
     // only break if at most 5cm above table
     if (height > .03)
@@ -778,8 +816,11 @@ bool SearchControl::_breakLower(cv::RotatedRect rect, double height)
     else if (dist < 5)
         return true;
     // grippers are fairly robust to yDiff
-    if (3*xDiff < rect.size.width)
-        return true;
+    // but try to keep part in upper half (where grippers are)
+    else if ( yDiff > -10 && yDiff < 25)
+        //if (3*xDiff < rect.size.width)        // original
+        if ( (xDiff + (rect.size.width/2) ) < 0.4*x )
+            return true;
     
     // come up with some tunable algorithm for scenarios where
     //  we can blind drop -- skinny pieces can be off in x more
@@ -791,22 +832,25 @@ bool SearchControl::_breakLower(cv::RotatedRect rect, double height)
 void SearchControl::_dropToTable(JointPositions jp)
 {
     ros::Duration(1).sleep();
-    double speed = 0.01;
+    //double speed = 0.01;
     //_right_hand->set_joint_position_speed();
     ros::spinOnce();
-    const geometry_msgs::Vector3 startForce(_right_hand->endpoint_effort().force);
-    geometry_msgs::Vector3 endpointForce;
+    const geometry_msgs::Vector3 startVel(_right_hand->endpoint_velocity().linear);
+    geometry_msgs::Vector3 endpointVel;
     ros::Rate r(100);
     gv::RPYPose pose;
     double height;
+    ros::Duration timeout(0.8);
+    ros::Time start;
+    int counter = 0;
     while ( ros::ok() )
     {
         //_right_hand->set_joint_position_speed(speed);
         //_right_hand->set_joint_positions(jp);
         _right_hand->set_velocities(jp);
         ros::spinOnce();
-        endpointForce = _right_hand->endpoint_effort().force;
-        //std::cout<<endpointForce<<"\n";
+        endpointVel = _right_hand->endpoint_velocity().linear;
+        //std::cout<<endpointVel<<"\n";
         pose = _right_hand->endpoint_pose();
         //pose.position.print("position");
         // if it's reached the table from height
@@ -816,16 +860,33 @@ void SearchControl::_dropToTable(JointPositions jp)
             std::cout<<"I should stop from height\n";
             break;
         }
-        // it's running into something -- z force is negative
-        if (endpointForce.z < -15)
-        {
-            std::cout<<"I should stop from force\n";
-            //break;
+        // if it's not longer moving down
+        else if (height < 0.0075) {
+            // this height set from height of 40_tooth_gear
+            //  still able to grab, despite being too large, at this height
+            if (fabs(endpointVel.z) < 0.002)
+            {
+                std::cout<<"I should stop from velocity\n";
+                break;
+                counter++;
+                if ( counter == 10 )
+                    start = ros::Time::now();
+                //timerRunning = true;
+            }
+            
+            if ( counter > 10 ) {
+                std::cout<<ros::Time::now() - start<<"\n";
+                if (ros::Time::now() - start > timeout)
+                    break;
+            }
         }
-        std::cout<<height<<","<<pose.position.x<<","<<pose.position.y;
-        std::cout<<","<<pose.position.z<<"\n";
+        else
+            ;//std::cout<<"height: "<<height<<"\n";
+        
+        //std::cout<<height<<","<<pose.position.x<<","<<pose.position.y;
+        //std::cout<<","<<pose.position.z<<"\n";
         // slowly decrease speed
-        speed /= 1.05;
+        //speed /= 1.05;
         r.sleep();
     }
     ros::spinOnce();
@@ -1137,7 +1198,7 @@ void SearchControl::_endpoint_control(gv::Point err, double w2)
 {
     if(!ros::ok())
         return;
-    std::cout<<"endpoint control"<<std::endl;
+    //std::cout<<"endpoint control"<<std::endl;
     ros::spinOnce();
     gv::RPYPose pose = geometry.home;
     pose.position = _right_hand->endpoint_pose().position;
