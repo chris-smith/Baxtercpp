@@ -99,6 +99,7 @@ private:
     void _endpoint_control(gv::Point, double);
     void _endpoint_control_accurate(gv::Point err);
     void _lower(double);                                      //  lowers down to table keeping object in center of camera
+    void _verify_lower(double);
     void _dropToTable(JointPositions);                     // blind drop until force increase
     double _getBlobArea();
     cv::Point2f _best_gripping_location(std::vector<cv::Point>);
@@ -488,13 +489,60 @@ void SearchControl::_verify_piece()
     //   While testing, may ask for piece name, rather than referencing classifier
     
     // try to automatically match piece
-    cv::Mat scene = _right_cam->cvImage()(_bounding_rect);
+    _verify_lower(geometry.table_height+0.03);
+    
+    // get bounding rectangle of object
+    cv::Mat scene = _right_cam->cvImage();
+    cv::Mat display = _right_cam->cvImage();
+    std::vector<cv::Point> blob = _getBlob(scene);
+    if (blob.empty()) {
+        std::cout <<"I've lost the piece\n";
+        _state = 0;
+        return;
+    }
+    cv::Rect rect = _get_bounds(blob);
+    rectangle(display, rect, cv::Scalar(0,255,0),1,8);
+    cv::Rect larger;
+    int size = 6;
+    try {
+        // increase bounds a little
+        larger = rect + cv::Size(size,size);
+        // move over
+        larger -= cv::Point(size/2, size/2);
+        // get subimage from bounds of object
+        scene = scene(larger);
+    }
+    catch (cv::Exception e) {
+        // this will throw if increasing rectangle bounds
+        // throws it outside bounds of the image
+        std::cout <<"exception thrown trying to increase bounds\n";
+        // adjust size
+        if (rect.y < size)
+            larger.y = 1;
+        if (rect.y+rect.height > scene_height-size)
+            larger.height = scene_height - rect.y - 1;
+        if (rect.x < size)
+            larger.x = 1;
+        if (rect.x+rect.width > scene_width-size)
+            larger.width = scene_width - rect.x - 1;
+        // move over
+        int xDif = larger.width - rect.width;
+        int yDif = larger.height - rect.height;
+        larger -= cv::Point(xDif/2, yDif/2);
+        scene = scene(larger);
+    }
     _found_piece = _classifier->match(scene);
     if (_found_piece == "") {
         // couldn't identify piece, query user
+        cv::imshow("Unknown Piece", display);
+        cv::waitKey(50);
         std::cout<<"What piece is this?\n";
         // read in part name
         std::cin>>_found_piece;
+        if (_kit->contains(_found_piece)) {
+            _classifier->save_scene(_found_piece, scene);
+            _classifier->reload();
+        }
     }
     else
         std::cout<<"I found "<<_found_piece<<"\n";
@@ -542,7 +590,10 @@ void SearchControl::_grab_piece()
     ros::spinOnce();
     
     // Check if holding object -- unreliable
+    float gripperPosition = _right_hand->gripper->state.position;
     bool gripped = _right_hand->gripper->state.gripping;
+    // tests showed gripper position to be 4.152 at closed position
+    gripped = gripped || (gripperPosition > 4.2 ? true : false);
     //_visionGrabCheck();
     if (gripped) {
         ROS_INFO("GRABBED PIECE CORRECTLY");
@@ -563,7 +614,6 @@ void SearchControl::_grab_piece()
         _right_hand->set_simple_positions(geometry.home.position, 0);
         _right_hand->gripper->go_to(100);
     }
-    
     return;
 }
 
@@ -672,18 +722,27 @@ void SearchControl::_lower(const double stop_height)
     double w2 = 0;
     double area, rectArea, percentArea, rectRatio;
     double ki = 0.8;    // integral gain
+    bool isSquare = false;
+    int noObject = 0;
+    
     ros::Time last = ros::Time::now();
     ros::Duration dt;
     while ((!(error.abs() < 0.001) || (fabs(rotation) > 0.01)) && ros::ok())
     {
+        if (noObject > 20)
+            break;
         scene = _right_cam->cvImage();
         blob = _getBlob(scene);
+        if(blob.empty()) {
+            _right_hand->exit_control_mode();
+            noObject++;
+            continue;
+        }
+        noObject = 0;
         //_best_gripping_location(blob);
         dt = ros::Time::now() - last;
         last = ros::Time::now();
         try{
-            if(blob.empty())
-                continue;
             //centroid = _best_gripping_location(blob);
             //centroid = _get_centroid(blob);
             area = cv::contourArea(blob, false);
@@ -698,10 +757,10 @@ void SearchControl::_lower(const double stop_height)
             centroid = rect.center;
             if ( (rectRatio > 0.9) && (rectRatio < 1.1) )
             {
-                // object is pretty square, don't rotate
-                //  for lego kits this largely means its circular
-                std::cout<<"object is square\n";
-                rect.angle = 0;
+                // object is approximately square, don't rotate
+                //  true for circular objects also
+                //std::cout<<"object is square\n";
+                isSquare = true;
             }
             else if (percentArea < .75)
             {
@@ -746,8 +805,8 @@ void SearchControl::_lower(const double stop_height)
             //std::cout<<"rectangle size\n\tx: " << rect.size.width <<"\n\ty: " << rect.size.height;
             
             // Get minimum _w2-rotation angle
-            if (rotation == 0)
-                ; //do nothing
+            if (isSquare)
+                rotation = 0; //do nothing
             else if (rotation < 45)
             {
                 if (rect.size.width > rect.size.height)
@@ -794,6 +853,129 @@ void SearchControl::_lower(const double stop_height)
     //pose.print();
 }
 
+void SearchControl::_verify_lower(const double stop_height)
+{
+    // tracks the object down until it reaches stop_height
+    // or area is a certain size
+    std::cout<<"verify lower\n";
+    float rotation = 1;
+    cv::RotatedRect rect;
+    cv::Mat scene;
+    cv::Point2d centroid;
+    std::vector<cv::Point> blob;
+    gv::Point error(1);
+    gv::Point integral_error(0);
+    gv::RPYPose pose;
+    JointPositions jp;
+    ros::Duration timeout(.01);
+    jp.names.push_back(_right_hand->name()+"_w2");
+    double height = _right_hand->endpoint_pose().position.z;
+    double w2 = 0;
+    double area, rectArea, percentArea, rectRatio;
+    double ki = 0.8;    // integral gain
+    bool isSquare = false;
+    ros::Time last = ros::Time::now();
+    ros::Duration dt;
+    
+    while ( ((area < 2000) || (fabs(rotation) > 0.01)) && ros::ok() )
+    {
+        scene = _right_cam->cvImage();
+        blob = _getBlob(scene);
+        if(blob.empty()) {
+            _right_hand->exit_control_mode();
+            continue;
+        }
+        dt = ros::Time::now() - last;
+        last = ros::Time::now();
+        try{
+            area = cv::contourArea(blob, false);
+            std::cout << "area " << area<<std::endl;
+            rect = cv::minAreaRect(blob);
+            rectArea = rect.size.height*rect.size.width;
+            percentArea = area/rectArea;
+            rectRatio = rect.size.height/rect.size.width;
+            // assume object has a regular shaped
+            //  -- square, circular, rectangular, etc
+            //  so we can use the bounding rectangle's center
+            centroid = rect.center;
+            if ( (rectRatio > 0.9) && (rectRatio < 1.1) )
+            {
+                // object is pretty square, don't rotate
+                //  for lego kits this largely means its circular
+                //std::cout<<"object is square\n";
+                isSquare  = true;
+                
+            }
+            else if (percentArea < .75)
+            {
+                // the object isn't largely rectangular
+                std::cout<<"object is irregularly shaped\n";
+            }
+            circle(scene, centroid, 10, cv::Scalar(-1), 1, 8);
+            error.x = centroid.x - scene_width/2; 
+            error.y = centroid.y - scene_height/2;
+            error.z = 0;
+            error.y /= scene_height;
+            error.x /= scene_width;
+            cv::Point2f rect_points[4];
+            rect.points(rect_points);
+            for(int j = 0; j < 4; j++)
+            {
+                line(scene, rect_points[j], rect_points[(j+1)%4], cv::Scalar(255,0,0),1,8);
+            }
+            cv::imshow("scene", scene);
+            cv::waitKey(50);
+            
+            // Rotation angle is always negative
+            rotation = rect.angle; //this is in degrees
+            if (isSquare)
+                rotation = 0; //do nothing
+            else if (rotation < 45)
+            {
+                if (rect.size.width > rect.size.height)
+                    rotation = 90 + rotation;
+            }
+            else
+            {   
+                if (rect.size.width > rect.size.height)
+                    rotation = -( 90 - rotation );
+            }
+            rotation = rotation*PI/180; //to radians
+            ros::spinOnce();
+            pose = _right_hand->endpoint_pose();
+            jp = _right_hand->joint_positions();
+            w2 = jp.at("right_w2") + rotation;
+            double yaw = pose.rpy.yaw;
+            height = pose.position.z;
+            _transform(error, yaw, height-geometry.table_height);
+            //error.print("transformed error");
+            //std::cout<<"yaw: "<<yaw<<" height: "<<height<<"  stop height: "<<stop_height<<"\n";
+            error.z = 0;//height - stop_height;
+            
+            if(height > stop_height)
+                error.z = .05;
+            else
+                break;
+            
+            //std::cout<<"rotation: "<<rotation<<"\n";
+            _endpoint_control(error, w2); //takes in error, w2 angle
+            ros::spinOnce();
+            pose = _right_hand->endpoint_pose();
+        }
+        catch(cv::Exception e){
+            ros::spinOnce();
+            _right_hand->exit_control_mode();
+            ROS_ERROR("OpenCV error: %s",e.what());
+            break;
+        }
+        //error.z = pose.position.z - geometry.table_height;    
+    }
+    //_right_controller->stop();
+    _right_hand->exit_control_mode();
+    std::cout<<"VERIFY LOWER COMPLETE\n";
+    //pose.print();
+}
+
 bool SearchControl::_breakLower(cv::RotatedRect rect, double height)
 {
     // tries to determine if the object bounding by rect is close enough to the
@@ -817,9 +999,9 @@ bool SearchControl::_breakLower(cv::RotatedRect rect, double height)
         return true;
     // grippers are fairly robust to yDiff
     // but try to keep part in upper half (where grippers are)
-    else if ( yDiff > -10 && yDiff < 25)
+    else if ( yDiff > -10 && yDiff < 20)
         //if (3*xDiff < rect.size.width)        // original
-        if ( (xDiff + (rect.size.width/2) ) < 0.4*x )
+        if ( (xDiff + (rect.size.width/2) ) < 0.3*x )
             return true;
     
     // come up with some tunable algorithm for scenarios where
@@ -1233,7 +1415,7 @@ void SearchControl::_endpoint_control(gv::Point err)
         return;
     //v_print(desired.angles, "positions");
     //_right_hand->set_joint_positions(desired);
-    _right_hand->set_command_timeout(0.8);
+    _right_hand->set_command_timeout(1);
     _right_hand->set_velocities(desired);
     //_right_hand->exit_control_mode();
 //    _endpoint_control(err, 0);

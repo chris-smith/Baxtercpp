@@ -19,6 +19,8 @@ public:
     std::string match(const cv::Mat&);
     void save_scene();                // prompts user to save scene in specified directory
     void save_scene(std::string);
+    void save_scene(std::string, const cv::Mat&);
+    void reload();                      // reload db
     
     bool _is_circle(std::vector< cv::Point >);
 private:
@@ -211,6 +213,8 @@ void ObjectClassifier::_load_images_recurse(std::string path)
     if (file_type_loc == path.size()-1)
         path = path.substr(0, file_type_loc);
     if (path != _dir_path){
+        // if the current path is not the main path for the directory
+        // add a new image type
         file_type_loc = path.find_last_of("/");
         if (file_type_loc == path.size()-1){
             file_type_loc = path.find_last_of("/", path.size()-2);
@@ -224,6 +228,8 @@ void ObjectClassifier::_load_images_recurse(std::string path)
     {
         file_name = dp->d_name;
         if(_is_home){
+            // if in home directory, recursively load files from
+            // each folder -- don't load files from home directory
             file_type_loc = file_name.find_last_of(".");
             if (file_type_loc != std::string::npos)
                 continue;
@@ -233,6 +239,8 @@ void ObjectClassifier::_load_images_recurse(std::string path)
             _load_images_recurse(path+file_name+"/");
         }
         else{
+            // if not in home directory, load all images
+            // of correct file types
             file_type_loc = file_name.find_last_of(".");
             if (file_type_loc == std::string::npos)
                 continue;
@@ -265,7 +273,7 @@ void ObjectClassifier::scene(const cv::Mat& scene)
     _detector.detect(_scene, _query_keypoints);
     _extractor.compute(_scene, _query_keypoints, _query_descriptors);
     //std::cout<<"scene descriptors: "<<_query_descriptors.size()<<"\n";
-    cv::imshow("scene",_scene);
+    cv::imshow("Classifier View",_scene);
 }
 
 void ObjectClassifier::_train_matcher()
@@ -326,13 +334,17 @@ std::string ObjectClassifier::match()
         std::string type;
         std::cout<<"Total number of matches: "<<good_matches.size()<<"\n";
         std::vector<std::string>::iterator it;
+        int ind;
         for(int i = 0; i < good_matches.size(); i++)
         {
             //std::cout<<"Match "<<i<<"\n\tqueryIdx: "<<window[i].queryIdx<<"\n\t";
             //std::cout<<"trainIdx: "<<window[i].trainIdx<<"\n\timgIdx: ";
             //std::cout<<window[i].imgIdx<<"\n\tdistance: "<<window[i].distance<<"\n";
             //if (_matches[i].distance < 0.5)
-            type = _db_names[good_matches[i].imgIdx];
+            ind = good_matches[i].imgIdx;
+            if (ind < _db_names.size())
+                type = _db_names[ind];
+            // all images are named "type_iter" where iter is a number
             type = type.substr(0, type.find_last_of("_"));
             int j;
             for(j = 0; j < _db_image_types.size(); j++)
@@ -383,6 +395,14 @@ std::string ObjectClassifier::match()
 void ObjectClassifier::save_scene()
 {
     _save_image();
+}
+
+void ObjectClassifier::save_scene(std::string name, const cv::Mat& img)
+{
+    // set scene
+    this->scene(img);
+    // save scene
+    this->save_scene(name);
 }
 
 void ObjectClassifier::save_scene(std::string resp)
@@ -444,6 +464,20 @@ void ObjectClassifier::save_scene(std::string resp)
         return;
     }
     std::cout<<"File saved as "<<ss.str()<<"!\n";
+}
+
+
+void ObjectClassifier::reload()
+{
+    _db_images.clear();
+    _db_names.clear();
+    _db_image_types.clear();
+    _num_types = 0;
+    _db_keypoints.clear();
+    _query_keypoints.clear();
+    _db_descriptors.clear();
+    _load_images();
+    _train_matcher();
 }
 
 void ObjectClassifier::_save_image()

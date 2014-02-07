@@ -112,12 +112,12 @@ void setup_pid(BaxterLimb& left, BaxterLimb& right)
     right.set_joint_pid("right_w2", (Gains){3.5, .5, 0.1}); //6
     right.set_joint_pid("right_w1", (Gains){4, .5, 0.05});
     right.set_joint_pid("right_w0", (Gains){3.5, .1, 0.002});
-    right.set_joint_pid("right_e1", (Gains){3.5, .1, 0.15});
+    right.set_joint_pid("right_e1", (Gains){3.75, .1, 0.15});
     right.set_joint_pid("right_e0", (Gains){3.25, .1, 0.002});
-    right.set_joint_pid("right_s1", (Gains){2, .03, 0.05});
+    right.set_joint_pid("right_s1", (Gains){1.75, .03, 0.02});
     right.set_joint_pid("right_s0", (Gains){2.25, .4, 0.015}); //0
     right.set_allowable_error(0.008);
-    right.set_max_velocity(.5);
+    right.set_max_velocity(.2);
     right.set_max_acceleration(20);
     Gains epGains(.6,.25,.05);
     //right.set_endpoint_pid(epGains);
