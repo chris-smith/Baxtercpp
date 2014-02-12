@@ -46,7 +46,7 @@ public:
         // declaring an instance of this class.
     void swap_hands();                          // starts to search with other hand
     
-    
+    void handleMatch(MatchParams);
 private:
     SearchControl(); //no access to default constructor
     
@@ -509,6 +509,15 @@ void SearchControl::_verify_piece()
         larger = rect + cv::Size(size,size);
         // move over
         larger -= cv::Point(size/2, size/2);
+        // limit rectangle to within 
+        if (larger.x <= 0)
+            larger.x = 0;
+        if (larger.x + larger.width > scene_width)
+            larger.width = scene_width = larger.x;
+        if (larger.y <= 0)
+            larger.y = 0;
+        if (larger.y + larger.height > scene_height)
+            larger.height = scene_height - larger.y;
         // get subimage from bounds of object
         scene = scene(larger);
     }
@@ -516,20 +525,6 @@ void SearchControl::_verify_piece()
         // this will throw if increasing rectangle bounds
         // throws it outside bounds of the image
         std::cout <<"exception thrown trying to increase bounds\n";
-        // adjust size
-        if (rect.y < size)
-            larger.y = 1;
-        if (rect.y+rect.height > scene_height-size)
-            larger.height = scene_height - rect.y - 1;
-        if (rect.x < size)
-            larger.x = 1;
-        if (rect.x+rect.width > scene_width-size)
-            larger.width = scene_width - rect.x - 1;
-        // move over
-        int xDif = larger.width - rect.width;
-        int yDif = larger.height - rect.height;
-        larger -= cv::Point(xDif/2, yDif/2);
-        scene = scene(larger);
     }
     _found_piece = _classifier->match(scene);
     if (_found_piece == "") {
@@ -1073,6 +1068,10 @@ void SearchControl::_dropToTable(JointPositions jp)
     }
     ros::spinOnce();
     _right_hand->exit_control_mode();
+}
+
+void SearchControl::handleMatch(MatchParams params) {
+    
 }
 
 bool SearchControl::_object()

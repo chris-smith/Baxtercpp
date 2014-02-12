@@ -25,7 +25,6 @@ class RPYPose{ Point point; RPY rpy; };
 *********************************/
 namespace gm = geometry_msgs;
 
-
 #define PI 3.141592653589793238463
 
 std::string JOINT_IDS[7] = {"_s0","_s1","_e0","_e1","_w0","_w1","_w2"};

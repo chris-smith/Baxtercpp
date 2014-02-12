@@ -1,4 +1,5 @@
 #include "baxterCam.h"
+#include "baxterLimb.h"
 #include <geometry_msgs/Point.h>
 #include <string>
 #include <dirent.h>
@@ -6,6 +7,26 @@
 #include <sstream>
 
 #define OBJ_CLS_DO_NOT_LOAD false
+
+
+#ifndef OBJECT_CLASSIFIER_H
+#define OBJECT_CLASSIFIER_H
+
+struct MatchParams {
+    std::string check;               // condition to check - e.g grip_width
+    std::string match;               // name of originally matched part
+    std::string possibleMatch;       // name of possible match
+    std::string comparison;          // comparison to make on condition - e.g <, >
+    double val;                      // value used in comparison
+    MatchParams() : check(""),match(""),possibleMatch(""),comparison(""),val(0) {}
+    MatchParams(std::string a) : check(a),match(""),possibleMatch(""),comparison(""),val(0) {}
+};
+
+struct Line {
+    cv::Point pt1, pt2;
+    Line() : pt1(), pt2() {}
+    Line(cv::Point a, cv::Point b) : pt1(a), pt2(b) {}
+};
 
 class ObjectClassifier
 {
@@ -22,7 +43,14 @@ public:
     void save_scene(std::string, const cv::Mat&);
     void reload();                      // reload db
     
-    bool _is_circle(std::vector< cv::Point >);
+    MatchParams buildMatch(const std::string);
+    
+    bool is_circle( std::vector< cv::Point > );
+    bool is_rectangular();
+    double angle(cv::Point, cv::Point, cv::Point, uint);
+    int referenceIndex(std::vector<cv::Point>, std::vector<cv::Point>, int, double);
+    int parallelIndex(std::vector<cv::Point>, std::vector<cv::Point>, int);
+    int perpendicularIndex(std::vector<cv::Point>, std::vector<cv::Point>, int);
 private:
     ObjectClassifier();
     
@@ -61,8 +89,11 @@ private:
 
     // Try to match specific shapes
     double _dist(cv::Point2f, cv::Point2f);
+    std::vector<cv::Point> _getBlob(cv::Mat&);
     //bool _is_circle(std::vector< cv::Point >);
     
+    // check if part is of a certain kind
+    bool _is_type(std::string, std::string);
 };
 
 ObjectClassifier::ObjectClassifier(std::string path)
@@ -300,10 +331,46 @@ void ObjectClassifier::_train_matcher()
     std::cout<<"Training Complete!\n";
 }
 
+/*  std::string check;               // condition to check - e.g grip_width
+    std::string match;               // name of originally matched part
+    std::string possibleMatch;       // name of possible match
+    std::string comparison;          // comparison to make on condition - e.g <, >
+    double val; 
+*/
+
+MatchParams ObjectClassifier::buildMatch(const std::string part) {
+    /* 
+     * When checking match,
+     *   true_match = (check compare val ? match : possibleMatch)
+     * e.g. axle
+     *   true_match = (grip_width < 15 ? axle : beam)
+     */
+    is_rectangular();
+    MatchParams match_(part);
+    if ( _is_type(part, "axle") ) {
+        std::cout << " is type axle \n";
+        match_.check = "grip_width";
+        match_.possibleMatch = "3_beam";        // or any beam
+        match_.comparison = "<";
+        match_.val = 15;
+    }
+    else if ( _is_type(part, "beam") ) {
+        std::cout << " is type beam \n";
+        match_.check = "grip_width";
+        match_.possibleMatch = "3_axle";        // or any axle
+        match_.comparison = ">";
+        match_.val = 15;
+    }
+    
+    return match_;
+}
+
 std::string ObjectClassifier::match(const cv::Mat& scene)
 {
     this->scene(scene);
-    return this->match();
+    std::string resp = this->match();
+    buildMatch(resp);
+    return resp;
 }
 
 std::string ObjectClassifier::match()
@@ -612,7 +679,168 @@ std::vector<std::string> ObjectClassifier::_get_files_names()
     return names;
 }
 
-bool ObjectClassifier::_is_circle(std::vector< cv::Point > blob)
+std::vector<cv::Point> ObjectClassifier::_getBlob(cv::Mat& scene)
+{
+    // finds outline of the largest non-white object
+    std::vector<cv::Point> temp(0,cv::Point(0,0));
+    if (scene.empty())
+    {
+        //ROS_ERROR("Image to search is empty");
+        return temp;
+    }
+    cv::Mat thresh;
+    try {
+        cv::cvtColor(scene, thresh, CV_BGR2GRAY);
+    }
+    catch (cv::Exception) {
+        ROS_ERROR("Unable to convert image to greyscale");
+        return temp;
+    }
+    cv::threshold(thresh, thresh,100,255,cv::THRESH_BINARY_INV);
+    int type = cv::MORPH_ELLIPSE;
+    int sz = 1;
+    cv::Mat element = getStructuringElement( type,
+                                             cv::Size(2*sz+1, 2*sz+1),
+                                             cv::Point(sz, sz) );
+    cv::erode(thresh, thresh, element); 
+    //element = getStructuringElement( type, (3,3) );
+    cv::morphologyEx(thresh, thresh, cv::MORPH_CLOSE, cv::Mat() );
+    cv::morphologyEx(thresh, thresh, cv::MORPH_CLOSE, cv::Mat() );
+    
+    std::vector< std::vector< cv::Point > > contours;
+    std::vector< cv::Vec4i > hierarchy;
+    int largest_area = 0;
+    int largest_contour_index = 0;
+    
+    cv::findContours(thresh, contours, CV_RETR_CCOMP, CV_CHAIN_APPROX_SIMPLE);
+    
+    int iters = contours.size();
+    for(int i = 0; i < iters; i++)
+    {
+        double a = cv::contourArea(contours[i], false);
+        if ( a > largest_area)
+        {
+            largest_area = a;
+            largest_contour_index = i;
+        }
+    }
+    //std::cout<<"blob area: "<<largest_area<<"\n";
+    //cv::imshow("blob", thresh);
+    double min_area = 75;
+    if (largest_area < min_area)
+    {
+        return temp;
+    }
+    
+    std::vector<cv::Point> hull;
+    convexHull(contours[largest_contour_index], hull, false, true);
+    return hull;
+    //return contours[largest_contour_index];
+}
+
+double ObjectClassifier::angle( cv::Point pt1, cv::Point pt2, cv::Point pt0, uint units=0 )
+{
+    double a = _dist(pt1, pt2);
+    double b = _dist(pt1, pt0);
+    double c = _dist(pt2, pt0);
+    // a2 = b2 + c2 - 2bc*cos(theta)
+    return acos((b*b + c*c - a*a)/(2*b*c));
+}
+
+bool pointsOppositeLine(Line line, cv::Point a, cv::Point b) {
+    // returns true if the points a and b are on opposite sides of line 
+    // from "How to determine if 2 points are on opposite sides of a lines"
+    //     on math.stackexchange.com
+    cv::Point pt1, pt2;
+    pt1 = line.pt1;
+    pt2 = line.pt2;
+    int first = (pt1.y-pt2.y)*(a.x-pt1.x) + (pt2.x-pt1.x)*(a.y-pt1.y);
+    int second = (pt1.y-pt2.y)*(b.x-pt1.x) + (pt2.x-pt1.x)*(b.y-pt1.y);
+    return ( first * second < 0 );
+}
+
+bool pointInBlob(cv::Point pt, std::vector<cv::Point> blob) {
+    std::vector<cv::Point>::iterator it;
+    it = blob.find(blob.begin(), blob.end(), pt);
+    if (it == blob.end())
+        return false;
+    return true    
+}
+
+bool _intersect(cv::Point2d pt, pt_line line)
+{
+    cv::Point2d a = line.pt1;
+    cv::Point2d b = line.pt2;
+    
+    double x = max(a.x-pt.x, b.x-pt.x); //furthest x distance from pt to line
+    if (x < 0) // pt is to the right of the line
+        return false;
+    double yMax, yMin;
+    yMax = max(a.y, b.y);
+    yMin = min(a.y, b.y);
+    if (( pt.y > yMax ) || (pt.y < yMin)) //pt.y must be between y coordinates of line to intersect
+        return false;
+    return true;
+}
+
+bool inBlob(Line line, std::vector< cv::Point > blob) {
+    int len = blob.size();
+    cv::Point pt1, pt2, a, b;
+    pt1 = line.pt1;
+    pt2 = line.pt2;
+    if ( pointInBlob(pt1) || pointInBlob(pt2) ) {
+        // line is made up of points that are in blob
+        
+    }
+    for (int i = 1; i <= len; i++) {
+        a = blob[i%len];
+        b = blob[i-1];
+        // check if the two points are edge points
+        if ( (pt1 == a && pt2 == b) || (pt1 == b && pt2 == a) )
+            return false;
+        // else 
+        if ( pointsOppositeLine(line, a, b) ) {
+            // potential crossing outside of object
+            // check that 
+        }
+    }
+}
+
+std::vector< cv::Rect > rectangles(std::vector< cv::Point > blob) {
+    // returns vector of rectangles found in blob
+    std::vector< std::vector< Line > > chords;
+    std::vector< Line > tempLine;
+    int len = blob.size();
+    Line temp;
+    for (int i = 0; i < len; i++) {
+        // build list of interior lines between all points
+        chords.push_back(tempLine);
+        for (int j = i+1; j < len; j++) {
+            temp = Line(blob[i], blob[j]);
+            // check that line connecting points stays within object
+            // boundary and that line is not an edge
+            if ( inBlob(temp, blob) )
+                chords.push_back(temp);
+        }
+    }
+    // remove small chords (all chords whose len < 2*minlen or something)
+    
+    // look for intersections between all chords
+    // for chords that intersect, see if their points form an approximate
+    // rectangle -- that lines are perpendicular or parallel
+   
+}
+
+bool ObjectClassifier::is_rectangular() {
+    // tries to verify that the object in scene is rectangular
+    const std::vector< cv::Point > blob = _getBlob(_scene);
+    std::vector<cv::Rect> rects = rectangles(blob);
+    if (rect.size() == 1)
+        return true;
+    return false;
+}
+
+bool ObjectClassifier::is_circle(std::vector< cv::Point > blob)
 {
     int size = blob.size();
     // get center of blob
@@ -645,8 +873,24 @@ bool ObjectClassifier::_is_circle(std::vector< cv::Point > blob)
     return false;
 }
 
-double ObjectClassifier::_dist(cv::Point2f b, cv::Point2f a)
-{
-    return std::sqrt( pow((b.x - a.x), 2) + pow((b.y - a.y), 2) );
+bool ObjectClassifier::_is_type(std::string part, std::string type) {
+    /*
+     * checks if the part is of the specified type
+     *  e.g part is "3_axle"
+     *     _is_type("3_axle", "axle") is true
+     *     _is_type("3_axle", "beam") is false
+     */
+    std::size_t found = part.find(type);
+    if ( found != std::string::npos)
+        return true;
+    return false;
 }
 
+double ObjectClassifier::_dist(cv::Point2f b, cv::Point2f a)
+{
+    double val = sqrt( pow((b.x - a.x), 2) + pow((b.y - a.y), 2) );
+    std::cout << "distance " << val << "\n";
+    return val;
+}
+
+#endif
