@@ -22,10 +22,35 @@ struct MatchParams {
     MatchParams(std::string a) : check(a),match(""),possibleMatch(""),comparison(""),val(0) {}
 };
 
-struct Line {
-    cv::Point pt1, pt2;
+class Line {
+public:
     Line() : pt1(), pt2() {}
     Line(cv::Point a, cv::Point b) : pt1(a), pt2(b) {}
+    cv::Point pt1, pt2;
+    
+    double length() {
+        // return length of this line
+        double dx = this->pt1.x - this->pt2.x;
+        double dy = this->pt1.y - this->pt2.y;
+        return sqrt( dx*dx + dy*dy );
+    };
+    int dot(Line b) {
+        double dx1, dx2, dy1, dy2, m1, m2;
+        dx1 = this->pt1.x - this->pt2.x;
+        dy1 = this->pt1.y - this->pt2.y;
+        dx2 = b.pt1.x - b.pt2.x;
+        dy2 = b.pt1.y - b.pt2.y;
+        return dx1*dx2 + dy1*dy2;
+        
+    }
+    double angle(Line b, int units=0) {
+        // return angle between this line and line b
+        // AdotB = len(A)*len(B)*cos(theta);
+        if (units)
+            return 180*acos( this->dot(b) / ( this->length() * b.length() ) ) / PI;
+        return acos( this->dot(b) / ( this->length() * b.length() ) );
+    };
+private:
 };
 
 class ObjectClassifier
@@ -48,9 +73,13 @@ public:
     bool is_circle( std::vector< cv::Point > );
     bool is_rectangular();
     double angle(cv::Point, cv::Point, cv::Point, uint);
-    int referenceIndex(std::vector<cv::Point>, std::vector<cv::Point>, int, double);
-    int parallelIndex(std::vector<cv::Point>, std::vector<cv::Point>, int);
-    int perpendicularIndex(std::vector<cv::Point>, std::vector<cv::Point>, int);
+    std::vector<cv::RotatedRect> rectangles(std::vector<cv::Point>);
+    std::vector<Line> interiorLines(std::vector<cv::Point>);
+    void drawLine(Line, int delay=1000);
+    bool inBlob(Line, std::vector<cv::Point>);
+    bool intersect(Line a, Line b);
+    std::vector<cv::RotatedRect> rectanglesFromDiagonals(std::vector<Line>);
+    
 private:
     ObjectClassifier();
     
@@ -761,81 +790,231 @@ bool pointsOppositeLine(Line line, cv::Point a, cv::Point b) {
 
 bool pointInBlob(cv::Point pt, std::vector<cv::Point> blob) {
     std::vector<cv::Point>::iterator it;
-    it = blob.find(blob.begin(), blob.end(), pt);
+    it = std::find(blob.begin(), blob.end(), pt);
     if (it == blob.end())
         return false;
-    return true    
+    return true;    
 }
 
-bool _intersect(cv::Point2d pt, pt_line line)
-{
-    cv::Point2d a = line.pt1;
-    cv::Point2d b = line.pt2;
+bool ObjectClassifier::intersect(Line a, Line b) {
+    // return true if distinct line segments a and b intersect along their length
     
-    double x = max(a.x-pt.x, b.x-pt.x); //furthest x distance from pt to line
-    if (x < 0) // pt is to the right of the line
+    // check that two lines don't share a common endpoint
+    if (a.pt1 == b.pt1 || a.pt1 == b.pt2 || a.pt2 == b.pt1 || a.pt2 == b.pt2)
         return false;
-    double yMax, yMin;
-    yMax = max(a.y, b.y);
-    yMin = min(a.y, b.y);
-    if (( pt.y > yMax ) || (pt.y < yMin)) //pt.y must be between y coordinates of line to intersect
-        return false;
-    return true;
+    // else if endpoints of one line are on opposite sides
+    // of the other line, check for an intersection
+    if ( pointsOppositeLine(a, b.pt1, b.pt2) ) {
+        // Solve line equations y-y1 = m(x-x1) for intersection point
+        float y, x, m1, m2;
+        cv::Point2f pt1, pt2, pt3, pt4;
+        pt1 = a.pt1;
+        pt2 = a.pt2;
+        pt3 = b.pt1;
+        pt4 = b.pt2;
+        // get slopes of each line
+        m1 = (pt1.y - pt2.y) / (pt1.x - pt2.x);
+        m2 = (pt3.y - pt4.y) / (pt3.x - pt4.x);
+        // if lines are parallel, they don't intersect or are the same line
+        // this should never throw due to pointOppositeLine check
+        if (m1 == m2)
+            return false;
+        
+        // from setting y-y1=m(x-x1) equal for each line
+        x = (m1*pt1.x - pt1.y - m2*pt3.x + pt3.y) / (m1 - m2);
+        y = m1*(x-pt1.x) + pt1.y;
+        
+        // check that x, y are between the endpoints of one of the lines
+        double xMax = max(pt1.x, pt2.x);
+        double xMin = min(pt1.x, pt2.x);
+        if ( (x > xMax) || (x < xMin) )
+            return false;
+        double yMax = max(pt1.y, pt2.y);
+        double yMin = min(pt1.y, pt2.y);
+        if ( (y > yMax) || (y < yMin) )
+            return false;
+        return true;
+    }
+    // else if points are on the same side of the line
+    return false;
 }
 
-bool inBlob(Line line, std::vector< cv::Point > blob) {
+bool ObjectClassifier::inBlob(Line line, std::vector< cv::Point > blob) {
     int len = blob.size();
     cv::Point pt1, pt2, a, b;
     pt1 = line.pt1;
     pt2 = line.pt2;
-    if ( pointInBlob(pt1) || pointInBlob(pt2) ) {
-        // line is made up of points that are in blob
-        
-    }
+    // check every edge segment of blob to see if the line intersects it
+    //std::cout << "line " << line.pt1 << " " << line.pt2 << "\n";
     for (int i = 1; i <= len; i++) {
         a = blob[i%len];
         b = blob[i-1];
-        // check if the two points are edge points
+        //std::cout << "edge " << a << " " << b << "\n";
+        // check if the two points are consecutive edge points
         if ( (pt1 == a && pt2 == b) || (pt1 == b && pt2 == a) )
             return false;
-        // else 
-        if ( pointsOppositeLine(line, a, b) ) {
-            // potential crossing outside of object
-            // check that 
-        }
+        //std::cout << "not an edge\n";
+        // else check for intersection
+        if ( intersect(line, Line(a,b)) )
+            return false;
+        //std::cout << " not an intersection\n";   
     }
+    //drawLine(line);
+    return true;
 }
 
-std::vector< cv::Rect > rectangles(std::vector< cv::Point > blob) {
-    // returns vector of rectangles found in blob
-    std::vector< std::vector< Line > > chords;
-    std::vector< Line > tempLine;
+std::vector< Line > ObjectClassifier::interiorLines(std::vector< cv::Point > blob) {
+    std::vector< Line > chords;
     int len = blob.size();
     Line temp;
     for (int i = 0; i < len; i++) {
         // build list of interior lines between all points
-        chords.push_back(tempLine);
         for (int j = i+1; j < len; j++) {
             temp = Line(blob[i], blob[j]);
             // check that line connecting points stays within object
             // boundary and that line is not an edge
             if ( inBlob(temp, blob) )
                 chords.push_back(temp);
+            //std::cout << "---new line\n";
         }
     }
-    // remove small chords (all chords whose len < 2*minlen or something)
+    return chords;
+}
+
+void ObjectClassifier::drawLine(Line a, int delay) {
+    cv::Mat img(_scene);
+    cv::RNG rng(ros::Time::now().nsec);
+    cv::Scalar color = cv::Scalar(rng.uniform(0, 255), rng.uniform(0,255), rng.uniform(0, 255));
+    cv::line(img, a.pt1, a.pt2, color);
+    cv::imshow("lines", img);
+    cv::waitKey(delay);
+}
+
+bool isUnique(cv::RotatedRect rect, std::vector<cv::RotatedRect> rects) {
+    // checks that the new rectangle is unique
+    // unique implies that at most 1 endpoint from each rectangle is within
     
-    // look for intersections between all chords
-    // for chords that intersect, see if their points form an approximate
-    // rectangle -- that lines are perpendicular or parallel
-   
+}
+
+cv::RotatedRect fromDiagonals(std::vector<Line> sides) {
+    // return a rectangle from the sides
+    if (sides.size() != 4)
+        return cv::RotatedRect(cv::Point(0,0), cv::Size(0,0), 0);
+    // else
+    double maxLen, minLen, len;
+    int maxInd, minInd;
+    maxLen = sides[0].length();
+    minLen = sides[0].length();
+    cv::Point2f center(0,0);
+    for (int i = 0; i < 4; i++) {
+        len = sides[i].length();
+        if (len < minLen) {
+            minLen = len;
+            minInd = i;
+        }
+        if (len > maxLen) {
+            maxLen = len;
+            maxInd = i;
+        }
+        center.x += sides[i].pt1.x;
+        center.y += sides[i].pt1.y;
+    }
+    // call height maxlen, width minLen
+    cv::Size2f size(minLen, maxLen);
+    // center is the average position of the corners
+    center.x /= 4;
+    center.y /= 4;
+    // angle is the angle between the length of the rectangle and the vertical
+    float angle = sides[maxInd].angle(Line(cv::Point(0,0),cv::Point(0,1)));
+    return cv::RotatedRect(center, size, angle);
+}
+
+std::vector< cv::RotatedRect > ObjectClassifier::rectanglesFromDiagonals(std::vector< Line > lines) {
+    // go through all sets of lines
+    int len = lines.size();
+    std::vector<cv::RotatedRect> rects;
+    std::vector<Line> sides(4, Line());
+    double angle;
+    bool isRect;
+    
+    for (int i = 0; i < len; i++) {
+        for (int j = i+1; j < len; j++) {
+            // form four sides from lines 
+            sides[0] = Line(lines[i].pt1, lines[j].pt1);
+            sides[1] = Line(lines[j].pt1, lines[i].pt2);
+            sides[2] = Line(lines[i].pt2, lines[j].pt2);
+            sides[3] = Line(lines[j].pt2, lines[i].pt1);
+            isRect = true;
+            std::cout <<"\n new rectangle\n";
+            for (int k = 1; k <= 4; k++) {
+                // get angle between successive sides
+                angle = sides[k%4].angle(sides[k-1], 1);
+                std::cout << " angle " << angle;
+                // all angles should be within 10 degrees of perpendicular
+                if (isnan(angle)) 
+                    isRect = false;
+                if (fabs(angle-90) > 5)
+                    isRect = false;
+            }
+            if (isRect) {
+                cv::Mat img(_scene);
+                cv::RNG rng(ros::Time::now().nsec);
+                cv::Scalar color = cv::Scalar(rng.uniform(0, 255), rng.uniform(0,255), rng.uniform(0, 255));
+                for (int i = 0; i < 4; i++)                    
+                    line(img, sides[i].pt1, sides[i].pt2, color);
+                cv::RotatedRect rect = fromDiagonals(sides);
+                cv::imshow("rectangles", img);
+                cv::waitKey(1000);
+                rects.push_back( rect );
+                std::cout << "\n--above is a rectangle\n";
+            }
+        }
+    }
+    std::cout << "\nI found " << rects.size() << "rectangles\n";
+    return rects;
+}
+
+std::vector< cv::RotatedRect > ObjectClassifier::rectangles(std::vector< cv::Point > blob) {
+    // returns vector of rectangles found in blob
+    std::vector< Line > chords;
+    std::cout << "-- Points in Blob -- \n";
+    for (int i = 0; i < blob.size(); i++)
+        std::cout << blob[i] << "\n";
+    std::cout << "-- End of Blob --\n";
+    chords = interiorLines(blob);
+    
+    std::cout << "num interior lines " << chords.size() << "\n";
+    double minLen = chords[0].length();
+    double maxLen = minLen;
+    double len;
+    for (int i = 1; i < chords.size(); i++) {
+        len = chords[i].length();
+        std::cout << len << "\n";
+        if (len < minLen)
+            minLen = len;
+        else if (len > maxLen)
+            maxLen = len;
+    }
+    std::cout << " min len " << minLen << "\n";
+    std::cout << " max len " << maxLen << "\n";
+    std::vector<Line> goodLines;
+    for (int i = 0; i < chords.size(); i++) {
+        if (chords[i].length() > 5*minLen) {
+            goodLines.push_back(chords[i]);
+            //drawLine(chords[i], 100);
+        }
+    }
+    std::cout << "num good interior lines " << goodLines.size() << "\n";
+    std::vector<cv::RotatedRect> rects = rectanglesFromDiagonals(goodLines);
+    
+    return rects;
 }
 
 bool ObjectClassifier::is_rectangular() {
     // tries to verify that the object in scene is rectangular
     const std::vector< cv::Point > blob = _getBlob(_scene);
-    std::vector<cv::Rect> rects = rectangles(blob);
-    if (rect.size() == 1)
+    std::vector<cv::RotatedRect> rects = rectangles(blob);
+    if (rects.size() == 1)
         return true;
     return false;
 }
