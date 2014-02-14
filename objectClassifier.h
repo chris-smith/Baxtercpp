@@ -79,6 +79,7 @@ public:
     bool inBlob(Line, std::vector<cv::Point>);
     bool intersect(Line a, Line b);
     std::vector<cv::RotatedRect> rectanglesFromDiagonals(std::vector<Line>);
+    std::vector<cv::Point> corners(const std::vector<cv::Point>);
     
 private:
     ObjectClassifier();
@@ -761,10 +762,10 @@ std::vector<cv::Point> ObjectClassifier::_getBlob(cv::Mat& scene)
         return temp;
     }
     
-    std::vector<cv::Point> hull;
-    convexHull(contours[largest_contour_index], hull, false, true);
-    return hull;
-    //return contours[largest_contour_index];
+    //std::vector<cv::Point> hull;
+    //convexHull(contours[largest_contour_index], hull, false, true);
+    //return hull;
+    return contours[largest_contour_index];
 }
 
 double ObjectClassifier::angle( cv::Point pt1, cv::Point pt2, cv::Point pt0, uint units=0 )
@@ -855,6 +856,12 @@ bool ObjectClassifier::inBlob(Line line, std::vector< cv::Point > blob) {
             return false;
         //std::cout << "not an edge\n";
         // else check for intersection
+//         cv::Mat img(_scene);
+//         Line temp(a,b);
+//         cv::line(img, temp.pt1, temp.pt2, cv::Scalar(255));
+//         cv::line(img, line.pt1, line.pt2, cv::Scalar(255,255,255));
+//         cv::imshow("lines", img);
+//         cv::waitKey(30);
         if ( intersect(line, Line(a,b)) )
             return false;
         //std::cout << " not an intersection\n";   
@@ -869,7 +876,8 @@ std::vector< Line > ObjectClassifier::interiorLines(std::vector< cv::Point > blo
     Line temp;
     for (int i = 0; i < len; i++) {
         // build list of interior lines between all points
-        for (int j = i+1; j < len; j++) {
+        // must be separated by at least 5 points
+        for (int j = i+5; j < len; j++) {
             temp = Line(blob[i], blob[j]);
             // check that line connecting points stays within object
             // boundary and that line is not an edge
@@ -939,34 +947,43 @@ std::vector< cv::RotatedRect > ObjectClassifier::rectanglesFromDiagonals(std::ve
     
     for (int i = 0; i < len; i++) {
         for (int j = i+1; j < len; j++) {
-            // form four sides from lines 
-            sides[0] = Line(lines[i].pt1, lines[j].pt1);
-            sides[1] = Line(lines[j].pt1, lines[i].pt2);
-            sides[2] = Line(lines[i].pt2, lines[j].pt2);
-            sides[3] = Line(lines[j].pt2, lines[i].pt1);
-            isRect = true;
-            std::cout <<"\n new rectangle\n";
-            for (int k = 1; k <= 4; k++) {
-                // get angle between successive sides
-                angle = sides[k%4].angle(sides[k-1], 1);
-                std::cout << " angle " << angle;
-                // all angles should be within 10 degrees of perpendicular
-                if (isnan(angle)) 
-                    isRect = false;
-                if (fabs(angle-90) > 5)
-                    isRect = false;
-            }
-            if (isRect) {
-                cv::Mat img(_scene);
-                cv::RNG rng(ros::Time::now().nsec);
-                cv::Scalar color = cv::Scalar(rng.uniform(0, 255), rng.uniform(0,255), rng.uniform(0, 255));
-                for (int i = 0; i < 4; i++)                    
-                    line(img, sides[i].pt1, sides[i].pt2, color);
-                cv::RotatedRect rect = fromDiagonals(sides);
-                cv::imshow("rectangles", img);
-                cv::waitKey(1000);
-                rects.push_back( rect );
-                std::cout << "\n--above is a rectangle\n";
+            // check that these two lines intersect
+            cv::Mat img(_scene);
+            cv::RNG rng(ros::Time::now().nsec);
+            cv::Scalar color = cv::Scalar(rng.uniform(0, 255), rng.uniform(0,255), rng.uniform(0, 255));
+            //line(img, lines[i].pt1, lines[i].pt2, color);
+            //line(img, lines[j].pt1, lines[j].pt2, color);
+            //cv::imshow("lines", img);
+            //cv::waitKey(1000);
+            if ( intersect(lines[i], lines[j]) ) {
+                // form four sides from lines 
+                sides[0] = Line(lines[i].pt1, lines[j].pt1);
+                sides[1] = Line(lines[j].pt1, lines[i].pt2);
+                sides[2] = Line(lines[i].pt2, lines[j].pt2);
+                sides[3] = Line(lines[j].pt2, lines[i].pt1);
+                isRect = true;
+                //std::cout <<"\n new rectangle\n";
+                for (int k = 1; k <= 4; k++) {
+                    // get angle between successive sides
+                    angle = sides[k%4].angle(sides[k-1], 1);
+                    //std::cout << " angle " << angle;
+                    // all angles should be within 10 degrees of perpendicular
+                    if (isnan(angle)) 
+                        isRect = false;
+                    if (fabs(angle-90) > 5)
+                        isRect = false;
+                }
+                if (isRect) {
+                    
+                    color = cv::Scalar(rng.uniform(0, 255), rng.uniform(0,255), rng.uniform(0, 255));
+                    for (int i = 0; i < 4; i++)                    
+                        line(img, sides[i].pt1, sides[i].pt2, color);
+                    cv::RotatedRect rect = fromDiagonals(sides);
+                    cv::imshow("rectangles", img);
+                    cv::waitKey(1000);
+                    rects.push_back( rect );
+                    std::cout << "\n--above is a rectangle\n";
+                }
             }
         }
     }
@@ -998,8 +1015,9 @@ std::vector< cv::RotatedRect > ObjectClassifier::rectangles(std::vector< cv::Poi
     std::cout << " min len " << minLen << "\n";
     std::cout << " max len " << maxLen << "\n";
     std::vector<Line> goodLines;
+    double thresh = sqrt(maxLen/minLen); // 5*minLen
     for (int i = 0; i < chords.size(); i++) {
-        if (chords[i].length() > 5*minLen) {
+        if (chords[i].length() > thresh) {
             goodLines.push_back(chords[i]);
             //drawLine(chords[i], 100);
         }
@@ -1010,9 +1028,103 @@ std::vector< cv::RotatedRect > ObjectClassifier::rectangles(std::vector< cv::Poi
     return rects;
 }
 
+std::vector<int> quickSort(const std::vector<int>& arr) {
+    // sort array of distinct indices
+    int len = arr.size();
+    if (len < 2)
+        return arr;
+    // else
+    std::vector<int> a, b;
+    int p = arr[0];
+    for (int i = 1; i < len; i++) {
+        if (arr[i] < p)
+            a.push_back(arr[i]);
+        else if (arr[i] > p)
+            b.push_back(arr[i]);
+    }
+    // sort sub arrays
+    a = quickSort(a);
+    b = quickSort(b);
+    // combine arrays
+    a.push_back(p);
+    a.insert(a.end(), b.begin(), b.end());
+    
+    return a;
+}
+
+std::vector<cv::Point> ObjectClassifier::corners(const std::vector<cv::Point> blob) {
+    // get points near corners from blob
+    std::vector<int> hull;
+    std::vector<cv::Point> corners;
+    convexHull(blob, hull, false, true);
+    hull = quickSort(hull);
+    int hullLen = hull.size();
+    int blobLen = blob.size();
+    std::cout << "blobLen " << blobLen;
+    std::cout << "\nhullLen " << hullLen <<"\n";
+    int thresh = 10;
+    if (blobLen > 100)
+        thresh = sqrt(blobLen);
+    std::cout << "threshold " << thresh << "\n";
+    int index;
+    int lastIndex = 0;
+    int diff;
+    cv::Mat img(_scene);
+    cv::Scalar hullColor(255,0,0);
+    cv::Scalar pointColor(0, 255, 0);
+    // go through convex hull -- look for 
+    for(int i = 0; i < hullLen; i++) {
+        index = hull[i];
+        corners.push_back(blob[index]);
+        //circle(img, blob[index], 1, hullColor);
+        std::cout << "index " << index << "\n";
+        // if this index is far from last index, add some points
+        diff = index - lastIndex;
+        if ( abs(diff) > thresh ) {
+            for (int j = 1; j <= abs(diff)/thresh+1; j++) {
+                corners.push_back( blob[(lastIndex+(thresh*j)/3)%blobLen] );
+                corners.push_back( blob[(lastIndex+(thresh*j)/2)%blobLen] );
+                corners.push_back( blob[(lastIndex+2*thresh*j/3)%blobLen] );
+                //circle(img, blob[(lastIndex+thresh*j/3)%blobLen], 1, pointColor);
+                //circle(img, blob[(lastIndex+thresh*j/2)%blobLen], 1, pointColor);
+                //circle(img, blob[(lastIndex+2*thresh*j/3)%blobLen], 1, pointColor);
+            }
+        }
+        //cv::imshow("points", img);
+        //cv::waitKey(800);
+        lastIndex = index;
+    }
+    
+    // remove clustered points
+    int len = corners.size();
+    for(int i = 0; i < corners.size(); i++) {
+        int j = i+1;
+        while (_dist(corners[i], corners[j]) < 5)
+            j++;
+        if (j >= len)
+            j = len-1;
+        diff = j - i;
+        if (diff > 1) {
+            for (int k = i+1; k < j; k++) {
+                corners.erase( corners.begin() + k );
+            }
+        }
+    }
+    
+    return corners;
+}
+
 bool ObjectClassifier::is_rectangular() {
     // tries to verify that the object in scene is rectangular
-    const std::vector< cv::Point > blob = _getBlob(_scene);
+    std::vector< cv::Point > blob = _getBlob(_scene);
+    // now remove points from blob that aren't corners
+    blob = corners(blob);
+    cv::Mat img(_scene);
+    cv::Scalar color(255, 0, 0);
+    for (int i = 0; i < blob.size(); i++)
+        circle(img, blob[i], 1, color);
+    cv::imshow("points", img);
+    cv::waitKey(2000);
     std::vector<cv::RotatedRect> rects = rectangles(blob);
     if (rects.size() == 1)
         return true;
