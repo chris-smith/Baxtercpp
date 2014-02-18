@@ -12,14 +12,53 @@
 #ifndef OBJECT_CLASSIFIER_H
 #define OBJECT_CLASSIFIER_H
 
-struct MatchParams {
-    std::string check;               // condition to check - e.g grip_width
+class MatchParams {
+public:
     std::string match;               // name of originally matched part
-    std::string possibleMatch;       // name of possible match
-    std::string comparison;          // comparison to make on condition - e.g <, >
+    std::string condition;           // condition to check - e.g grip_width, aspect_ratio
+    std::string comparison;   // comparison to make on condition - e.g <, >
     double val;                      // value used in comparison
-    MatchParams() : check(""),match(""),possibleMatch(""),comparison(""),val(0) {}
-    MatchParams(std::string a) : check(a),match(""),possibleMatch(""),comparison(""),val(0) {}
+    MatchParams* possibleMatch;      // can chain together possible matches
+    MatchParams() : match(""),condition(""),possibleMatch(NULL),comparison(""),val(0) {}
+    MatchParams(std::string a) : match(a),condition(""),possibleMatch(NULL),comparison(""),val(0) {}
+
+    void print() {
+        std::cout << "\nMatch: " << match;
+        std::cout << "\nCondition: " << condition;
+        std::cout << "\nComparison: " << comparison;
+        std::cout << "\nValue: " << val;
+        std::cout << "\nNextMatch: " << (possibleMatch == NULL ? "Null" : "" );
+        if (possibleMatch)
+            possibleMatch->print();
+        std::cout << "\n";
+    };
+    
+    // operators
+    MatchParams& operator=(const MatchParams &rhs) {
+        if (this != &rhs) {
+            this->match = rhs.match;
+            this->condition = rhs.condition;
+            this->comparison = rhs.comparison;
+            this->val = rhs.val;
+            this->possibleMatch = rhs.possibleMatch;
+        }
+        return *this;
+    };
+    bool operator==(const MatchParams &rhs) const {
+        if (this->match != rhs.match)
+            return false;
+        else if (this->condition != rhs.condition)
+            return false;
+        else if (this->comparison != rhs.comparison)
+            return false;
+        else if (this->val != rhs.val)
+            return false;
+        return true;
+    };
+    bool operator!=(const MatchParams &rhs) const {
+        return !(*this == rhs);
+    };
+private:
 };
 
 class Line {
@@ -63,6 +102,7 @@ public:
     void scene(const cv::Mat&);       //set the image to search through
     std::string match();
     std::string match(const cv::Mat&);
+    MatchParams conditionalMatch(const cv::Mat&);
     void save_scene();                // prompts user to save scene in specified directory
     void save_scene(std::string);
     void save_scene(std::string, const cv::Mat&);
@@ -375,24 +415,34 @@ MatchParams ObjectClassifier::buildMatch(const std::string part) {
      * e.g. axle
      *   true_match = (grip_width < 15 ? axle : beam)
      */
-    is_rectangular();
     MatchParams match_(part);
     if ( _is_type(part, "axle") ) {
         std::cout << " is type axle \n";
-        match_.check = "grip_width";
-        match_.possibleMatch = "3_beam";        // or any beam
+        match_.condition = "grip_width";
+        match_.possibleMatch = new MatchParams("3_beam");        // or any beam
         match_.comparison = "<";
-        match_.val = 15;
+        match_.val = 13;
     }
     else if ( _is_type(part, "beam") ) {
+        // beam is also frequently confused with 4210857
+        //  not sure what check I could do to distinguish with that
         std::cout << " is type beam \n";
-        match_.check = "grip_width";
-        match_.possibleMatch = "3_axle";        // or any axle
-        match_.comparison = ">";
-        match_.val = 15;
+        if ( is_rectangular() ) {
+            match_.condition = "grip_width";
+            match_.possibleMatch = new MatchParams("3_axle");        // or any axle
+            match_.comparison = ">";
+            match_.val = 13;
+        }
+        else
+            match_.match = "4_6_beam";           // or any bent beam
     }
     
     return match_;
+}
+
+MatchParams ObjectClassifier::conditionalMatch(const cv::Mat& scene) 
+{
+    return buildMatch( match(scene) );
 }
 
 std::string ObjectClassifier::match(const cv::Mat& scene)
@@ -1119,6 +1169,21 @@ bool ObjectClassifier::is_rectangular() {
     std::vector< cv::Point > blob = _getBlob(_scene);
     // now remove points from blob that aren't corners
     blob = corners(blob);
+    std::vector<int> hull;
+    convexHull(blob, hull, false, true);
+    std::vector<cv::Vec4i> defects;
+    convexityDefects(blob, hull, defects);
+    std::cout << "--" << defects.size() << " Convexity defects --\n";
+    for(int i = 0; i < defects.size(); i++) {
+        std::cout << defects[i][0] << " " << defects[i][1] << " ";
+        std::cout << defects[i][2] << " " << defects[i][3] << "\n";
+    }
+    std::cout << "--End of Convexity Defects--\n";
+    if (defects.size() < 2)
+        return true;
+    return false;
+    
+    // tries to find rectangles within blob
     cv::Mat img(_scene);
     cv::Scalar color(255, 0, 0);
     for (int i = 0; i < blob.size(); i++)

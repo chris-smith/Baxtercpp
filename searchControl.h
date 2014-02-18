@@ -46,7 +46,7 @@ public:
         // declaring an instance of this class.
     void swap_hands();                          // starts to search with other hand
     
-    void handleMatch(MatchParams);
+    //void handleMatch(MatchParams);
 private:
     SearchControl(); //no access to default constructor
     
@@ -107,6 +107,7 @@ private:
     void _remove_grippers(double);            // finds grippers in test image for removal later
     bool _breakLower(cv::RotatedRect, double);
     bool _visionGrabCheck();
+    void _handleMatch(const std::string, double);
     
     //Search variables
     cv::Point2d _obj_loc;                                //  location of found object in _object()
@@ -126,6 +127,7 @@ private:
     cv::Mat _bgra_gripper_mask;
     cv::Mat _closed_gripper_mask;
     std::string _found_piece;
+    MatchParams _conditionalMatch;
     gv::Point _last_err;                                // last error in _move_to_piece
 };
 
@@ -526,7 +528,9 @@ void SearchControl::_verify_piece()
         // throws it outside bounds of the image
         std::cout <<"exception thrown trying to increase bounds\n";
     }
-    _found_piece = _classifier->match(scene);
+    //_found_piece = _classifier->match(scene);
+    _conditionalMatch = _classifier->conditionalMatch(scene);
+    _found_piece = _conditionalMatch.match;
     if (_found_piece == "") {
         // couldn't identify piece, query user
         cv::imshow("Unknown Piece", display);
@@ -587,6 +591,8 @@ void SearchControl::_grab_piece()
     // Check if holding object -- unreliable
     float gripperPosition = _right_hand->gripper->state.position;
     bool gripped = _right_hand->gripper->state.gripping;
+    // check with conditional match to see if match needs to be changed
+    _handleMatch("grip_width", gripperPosition);
     // tests showed gripper position to be 4.152 at closed position
     gripped = gripped || (gripperPosition > 4.2 ? true : false);
     //_visionGrabCheck();
@@ -618,7 +624,9 @@ void SearchControl::_deposit_piece()
     //  Deposit grabbed piece in NxtKit
     
     // Get Coordinates of dropoff
+    _found_piece = _conditionalMatch.match;
     cv::RotatedRect container = _kit->get_coordinates(_found_piece);
+    std::cout<<"Final Decision on piece is that it is " << _found_piece << "\n";
     if(container.size == cv::Size2f(-1,-1)){
         ROS_ERROR("The piece [%s] does not exist in this kit", _found_piece.c_str());
         _state = 0;
@@ -645,6 +653,8 @@ void SearchControl::_deposit_piece()
     _state = 0;
     return;
 }
+
+
 
 bool SearchControl::_visionGrabCheck(){
     // tries to check baxter's current image against
@@ -1070,8 +1080,63 @@ void SearchControl::_dropToTable(JointPositions jp)
     _right_hand->exit_control_mode();
 }
 
-void SearchControl::handleMatch(MatchParams params) {
+void SearchControl::_handleMatch(const std::string condition, double measuredVal) {
+    /* 
+     * When checking match,
+     *   true_match = (check compare val ? match : possibleMatch)
+     * e.g. axle
+     *   true_match = (grip_width < 15 ? axle : beam)
+     */
     
+    // if the condition being called is not the same
+    // as the condition to be checked or if
+    // there is no alternative, do nothing
+    //std::cout << "measured value is " << measuredVal < "\n";
+    _conditionalMatch.print();
+    if (_conditionalMatch.possibleMatch == NULL) {
+        std::cout<<"no possible match for this part\n";
+        return;
+    }
+    else if ( condition != _conditionalMatch.condition )
+        return;
+    
+    // else
+    std::string comp = _conditionalMatch.comparison;
+    //std::cout << "condition to check " << condition << "\n";
+    //std::cout << "measured value is " << measuredVal << "\n";
+    // if condition isn't satisfied, set match to conditionalMatch
+    MatchParams temp = *_conditionalMatch.possibleMatch;
+    delete _conditionalMatch.possibleMatch;
+    if (comp == "<") {
+        if (_conditionalMatch.val < measuredVal)
+            _conditionalMatch = temp;
+    }
+    else if (comp == ">") {
+        if (_conditionalMatch.val > measuredVal)
+            _conditionalMatch = temp;
+    }
+    else if (comp == "==") {
+        if (_conditionalMatch.val == measuredVal)
+            _conditionalMatch = temp;
+    }
+    else if (comp == ">=") {
+        if (_conditionalMatch.val >= measuredVal)
+            _conditionalMatch = temp;
+    }
+    else if (comp == "<=") {
+        if (_conditionalMatch.val <= measuredVal)
+            _conditionalMatch = temp;
+    }
+    else if (comp == "!=") {
+        if (_conditionalMatch.val != measuredVal)
+            _conditionalMatch = temp;
+    }
+    else 
+        std::cout << "Unsupported comparison in method _handleMatch() of type " << comp << "\n";
+    if ( _conditionalMatch == temp )
+        std::cout << "initial match corrected to " << temp.match << "\n";
+    // propagate match verification down if necessary
+    _handleMatch(condition, measuredVal);
 }
 
 bool SearchControl::_object()
