@@ -101,6 +101,7 @@ public:
     void set_allowable_error(double);
     void set_max_velocity(std::vector<double>);
     void set_max_velocity(double);
+    double get_max_velocity();
     void set_max_acceleration(std::vector<double>);
     void set_max_acceleration(double);
     void set_joint_pid(std::string, Gains);
@@ -474,6 +475,17 @@ void BaxterLimb::set_max_velocity(double max)
     {
         _max_velocity[i] = fabs(max);
     }
+}
+
+double BaxterLimb::get_max_velocity()
+{
+    double max = 0;
+    for(int i = 0; i < NUMJOINTS; i++)
+    {
+        if (_max_velocity[i] > max)
+            max = _max_velocity[i];
+    }
+    return max;
 }
 
 void BaxterLimb::set_max_acceleration(std::vector<double> max)

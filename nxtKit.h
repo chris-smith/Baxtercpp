@@ -137,7 +137,7 @@ void NxtKit::_setup_containers()
     objs.clear();
     // EXTENDED PEGS
     _container.rect = _to_rect(cv::Point2f(.145,.141), cv::Size2f(.044,.058));
-    objs.push_back("extended_peg");     //4514553
+    objs.push_back("extended_peg");     //655826
     _container.objects = objs;
     _containers.push_back(_container);
     objs.clear();
@@ -240,12 +240,12 @@ cv::RotatedRect NxtKit::get_coordinates(std::string part_name)
 cv::RotatedRect NxtKit::_to_global(Container container) 
 {
     // returns coordinates of container relative to Baxter
-    std::cout<<" rect center "<<container.rect.center<<"\n";
+    //std::cout<<" rect center "<<container.rect.center<<"\n";
     double xTemp = container.rect.center.x;
     double yTemp = container.rect.center.y;
     double x = cos(-_angle)*xTemp - sin(-_angle)*yTemp;
     double y = -sin(-_angle)*xTemp - cos(-_angle)*yTemp;
-    std::cout<<" relative -- "<<x<<" "<<y<<"\n";
+    //std::cout<<" relative -- "<<x<<" "<<y<<"\n";
     x += _origin.x;
     y += _origin.y;
     container.rect.center = cv::Point2f(x,y);

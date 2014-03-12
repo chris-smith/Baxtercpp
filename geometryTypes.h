@@ -122,6 +122,17 @@ public:
         ROS_ERROR("The joint [%s] is not a member of this class", joint.c_str());
         return -PI*2;
     }
+    void at(std::string joint, double val)
+    {
+        for(int i = 0; i < names.size(); i++)
+        {
+            if (joint == names[i])
+                angles[i] = val;
+            else if(joint == JOINT_IDS[i])
+                angles[i] = val;
+        }
+        //ROS_ERROR("The joint [%s] is not a member of this class", joint.c_str());
+    }
     JointPositions abs() const
     {
         int size = this->angles.size();

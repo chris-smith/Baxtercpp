@@ -12,16 +12,69 @@
 #ifndef OBJECT_CLASSIFIER_H
 #define OBJECT_CLASSIFIER_H
 
+enum ObjectShape { LINE, TRIANGLE, CIRCLE, RECTANGLE, UNKNOWN };
+
+class ObjectModel {
+public:
+    // build an object of the model as new information about it is discovered
+    // this allows a decision to be made at the final stage of part deposition
+    // about what part this actually is
+    double aspect_ratio;        // width : height
+    float grip_width;
+    std::vector< cv::Point > minimalBlob;
+    std::vector< double > angles;
+    bool convex, isSquare;
+    ObjectShape shape;
+    // these quantities are scaled by the height offset of the camera
+    double length, width;       // of minimum bounding rect. assert length > width
+    double area, area_ratio;    // area of outer bounds
+    double internal_area;        // counts white pixels in view
+    ObjectModel() : aspect_ratio(-1), grip_width(-1), convex(false), shape(UNKNOWN) {}
+    
+    void print() {
+        std::cout << "\nObject Model--\n";
+        std::cout << "Aspect Ratio: " << aspect_ratio;
+        std::cout << "\nGrip Width: " << grip_width;
+        std::cout << "\nConvex: " << (convex ? "true" : "FALSE");
+        std::cout << "\nMinimal Blob Size: " << minimalBlob.size();
+        std::cout << "\nLength: " << length;
+        std::cout << "\nWidth: " << width;
+        std::cout << "\nArea: " << area;
+        std::cout << "\nArea Ratio: " << area_ratio;
+        std::cout << "\nInternal Area: " << internal_area;
+        std::cout << "\nShape: ";
+        switch(shape) {
+            case 0:
+                std::cout << "Line";
+                break;
+            case 1:
+                std::cout << "Triangle";
+                break;
+            case 2:
+                std::cout << "Circle";
+                break;
+            case 3:
+                std::cout << "Rectangle";
+                break;
+            default:
+                std::cout << "Unknown";
+                break;
+        }
+        std::cout << "\n";
+    }
+};
+
 class MatchParams {
 public:
     std::string match;               // name of originally matched part
     std::string condition;           // condition to check - e.g grip_width, aspect_ratio
-    std::string comparison;   // comparison to make on condition - e.g <, >
+    std::string comparison;          // comparison to make on condition - e.g <, >
     double val;                      // value used in comparison
     MatchParams* possibleMatch;      // can chain together possible matches
     MatchParams() : match(""),condition(""),possibleMatch(NULL),comparison(""),val(0) {}
     MatchParams(std::string a) : match(a),condition(""),possibleMatch(NULL),comparison(""),val(0) {}
-
+    MatchParams(const MatchParams &a) { *this = a; };
+    
     void print() {
         std::cout << "\nMatch: " << match;
         std::cout << "\nCondition: " << condition;
@@ -102,16 +155,22 @@ public:
     void scene(const cv::Mat&);       //set the image to search through
     std::string match();
     std::string match(const cv::Mat&);
-    MatchParams conditionalMatch(const cv::Mat&);
+    std::string getFinalDecision(ObjectModel, std::string);
+    MatchParams* conditionalMatch(const cv::Mat&);
     void save_scene();                // prompts user to save scene in specified directory
     void save_scene(std::string);
     void save_scene(std::string, const cv::Mat&);
     void reload();                      // reload db
     
-    MatchParams buildMatch(const std::string);
+    MatchParams* buildMatch(const std::string);
     
     bool is_circle( std::vector< cv::Point > );
     bool is_rectangular();
+    bool is_rectangular(const cv::Mat&);
+    bool is_rectangular(std::vector<cv::Point>);
+    bool is_rectangular(std::vector< cv::Point >, ObjectModel&);
+    float aspect_ratio();
+    float aspect_ratio(std::vector<cv::Point>);
     double angle(cv::Point, cv::Point, cv::Point, uint);
     std::vector<cv::RotatedRect> rectangles(std::vector<cv::Point>);
     std::vector<Line> interiorLines(std::vector<cv::Point>);
@@ -159,11 +218,12 @@ private:
 
     // Try to match specific shapes
     double _dist(cv::Point2f, cv::Point2f);
-    std::vector<cv::Point> _getBlob(cv::Mat&);
+    std::vector<cv::Point> _getBlob(const cv::Mat&);
     //bool _is_circle(std::vector< cv::Point >);
     
     // check if part is of a certain kind
     bool _is_type(std::string, std::string);
+    void _handleMatch(const std::string, MatchParams*, double);
 };
 
 ObjectClassifier::ObjectClassifier(std::string path)
@@ -336,12 +396,16 @@ void ObjectClassifier::_load_images_recurse(std::string path)
                 continue;
             if (path.find_last_of("/") != path.size()-1)
                 path += '/';
-            _num_types++;
-            _load_images_recurse(path+file_name+"/");
+            // don't load images whose name starts with '_'
+            if (file_name[0] != '_') {
+                 _num_types++;
+                _load_images_recurse(path+file_name+"/");
+            }
         }
         else{
             // if not in home directory, load all images
             // of correct file types
+            
             file_type_loc = file_name.find_last_of(".");
             if (file_type_loc == std::string::npos)
                 continue;
@@ -401,6 +465,141 @@ void ObjectClassifier::_train_matcher()
     std::cout<<"Training Complete!\n";
 }
 
+bool inRange(double measured, double desired, double tolerance) {
+    return fabs(measured-desired) <= tolerance;
+}
+
+std::string ObjectClassifier::getFinalDecision(ObjectModel model, std::string part) {
+    // tries to make a final decision about what the object actually is
+    // the model is built from geometric data gathered about the object
+    std::string finalDecision;
+    finalDecision = part;
+    if ( _is_type(part, "gear") ) {
+        if (model.grip_width < 20)
+            finalDecision = "8_tooth_gear";
+        else if (model.grip_width < 30)
+            finalDecision = "12_tooth_gear";
+        else if (model.grip_width < 40)
+            finalDecision = "16_tooth_gear";
+        else if (model.grip_width < 52)
+            finalDecision = "20_tooth_gear";
+        else if (model.grip_width < 70)
+            finalDecision = "24_tooth_gear";
+        else if ( !_is_type(part, "40_tooth") ) {
+            if (model.grip_width > 70)
+                finalDecision = "36_tooth_gear";
+        }
+    }
+    else if ( _is_type(part, "tire") || _is_type(part, "wheel") )
+        finalDecision = part;
+    else if ( (model.grip_width < 12) && !_is_type(part, "beam") ) {
+        // very skinny parts
+        if (model.length < 4) {
+            if (model.area < 20)
+                finalDecision = "2_axle";
+            else if (model.aspect_ratio < 0.35)
+                finalDecision = "peg";
+            else
+                finalDecision = "2_1_plate";
+        }
+        else if (model.length < 6) {
+            if (model.area_ratio > 0.76)
+                finalDecision = "3_axle";
+            else if (model.aspect_ratio < 0.23)
+                finalDecision = "extended_peg";
+            else
+                finalDecision = "extended_axle_peg";
+        }
+        else {
+            // part is an axle -- need to choose correct one based on length
+            if (model.length < 7)
+                finalDecision = "4_axle";
+            else if (model.length < 9)
+                finalDecision = "5_axle";
+            else if (model.length < 11.2)
+                finalDecision = "6_axle";
+            else if (model.length < 14.5)
+                finalDecision = "8_axle";
+            else if (model.length < 18)
+                finalDecision = "10_axle";
+            else
+                finalDecision = "12_axle"; 
+        }
+    }
+    else if ( _is_type(part, "beam") && model.area_ratio < .7 && !model.convex ) {
+        // bent parts
+        if (model.area < 150)
+            finalDecision = "2_4_beam";
+        else if (model.area < 195)
+            finalDecision = "3_5_beam";
+        else if (model.area < 225)
+            finalDecision = "4_6_beam";
+        else
+            finalDecision = "3_4_7_beam";
+    }
+    else if ( _is_type(part, "peg_brick") || _is_type(part, "axle_brick") ||
+        ( !_is_type(part, "beam") && !model.convex && fabs(model.grip_width-22) < 3 ) ) {
+        if (model.length < 4.25) {
+            finalDecision = _is_type(part, "axle_brick") ? "2_1_axle_brick" : "2_1_peg_brick";
+            if (model.internal_area - model.area > 3)
+                finalDecision = "2_1_brick";
+            else if (model.area - model.internal_area < 0)
+                finalDecision = "2_1_peg_brick";
+                
+        }
+        else if (model.length < 8)
+            finalDecision = "4_1_peg_brick";
+        else if (model.length < 12)
+            finalDecision = "6_1_peg_brick";
+        else if (model.length < 15)
+            finalDecision = "8_1_peg_brick";
+        else
+            finalDecision = "16_1_peg_brick";
+    }
+    else if ( _is_type(part, "plate") ) {
+        if (model.grip_width > 30) {
+            // is two wide
+            if (model.length < 8)
+                finalDecision = "4_2_plate";
+            else if (model.length < 12)
+                finalDecision = "6_2_plate";
+            else
+                finalDecision = "8_2_plate";
+        }
+        else if (model.grip_width < 20) {
+            if (model.length < 6)
+                finalDecision = "2_1_plate";
+            else
+                finalDecision = "4_1_plate";
+        }
+    } 
+    else if (( _is_type(part, "beam") && model.area_ratio > .7) ||
+        ( (model.shape == RECTANGLE  || model.area_ratio > .7 || model.length > 18 )
+        && ( model.grip_width > 12 && model.grip_width < 20) ) ) {
+        if ( !_is_type(part, "beam") && model.length < 4.5 && model.convex)
+            finalDecision = "2_1_plate";
+        else if (model.length < 6)
+            finalDecision = "3_beam";
+        else if (model.length < 7.5 && model.convex)
+            finalDecision = "4_1_plate";
+        else if (model.length < 10)
+            finalDecision = "5_beam";
+        else if (model.length < 13)
+            finalDecision = "7_beam";
+        else if (model.length < 17)
+            finalDecision = "9_beam";
+        else if (model.length < 20)
+            finalDecision = "11_beam";
+        else
+            finalDecision = "15_beam";  // 
+    }
+    
+    else
+        finalDecision = "4512363";
+    
+    return finalDecision;
+}
+
 /*  std::string check;               // condition to check - e.g grip_width
     std::string match;               // name of originally matched part
     std::string possibleMatch;       // name of possible match
@@ -408,41 +607,202 @@ void ObjectClassifier::_train_matcher()
     double val; 
 */
 
-MatchParams ObjectClassifier::buildMatch(const std::string part) {
+MatchParams* ObjectClassifier::buildMatch(const std::string part) {
     /* 
      * When checking match,
      *   true_match = (check compare val ? match : possibleMatch)
      * e.g. axle
      *   true_match = (grip_width < 15 ? axle : beam)
      */
-    MatchParams match_(part);
-    if ( _is_type(part, "axle") ) {
+    MatchParams* match_ = new MatchParams(part);
+    return match_;
+    bool rectangular = is_rectangular();
+    if ( part == "" ) {
+        if ( rectangular ) {
+            match_->match = "4_axle";
+            match_->condition = "grip_width";
+            match_->comparison = "<";
+            match_->val = 13;
+            match_->possibleMatch = new MatchParams("UNKNOWN_PIECE");
+        }
+    }
+    else if ( _is_type(part, "extended_axle_peg") ) {
+        match_->possibleMatch = new MatchParams("extended_peg");
+        match_->condition = "grip_width";
+        match_->comparison = ">";
+        match_->val = 7.1;
+    }
+    else if ( _is_type(part, "axle") ) {
         std::cout << " is type axle \n";
-        match_.condition = "grip_width";
-        match_.possibleMatch = new MatchParams("3_beam");        // or any beam
-        match_.comparison = "<";
-        match_.val = 13;
+        match_->condition = "grip_width";
+        match_->possibleMatch = new MatchParams("3_beam");        // or any beam
+        match_->comparison = "<";
+        match_->val = 13;
     }
     else if ( _is_type(part, "beam") ) {
         // beam is also frequently confused with 4210857
         //  not sure what check I could do to distinguish with that
         std::cout << " is type beam \n";
-        if ( is_rectangular() ) {
-            match_.condition = "grip_width";
-            match_.possibleMatch = new MatchParams("3_axle");        // or any axle
-            match_.comparison = ">";
-            match_.val = 13;
+        if ( rectangular ) {
+            match_->condition = "grip_width";
+            match_->possibleMatch = new MatchParams("3_axle");        // or any axle
+            match_->comparison = ">";
+            match_->val = 13;
         }
         else
-            match_.match = "4_6_beam";           // or any bent beam
+            match_->match = "4_6_beam";           // or any bent beam
     }
-    
+    else if ( _is_type(part, "40_tooth_gear") ) {
+        match_->possibleMatch = new MatchParams("24_tooth_gear");
+        match_->condition = "grip_width";
+        match_->comparison = ">";
+        match_->val = 60;
+    }
+    else if( _is_type(part, "gear") && !_is_type(part, "40_tooth") &&
+             !_is_type(part, "worm") && !_is_type(part, "crown") ) {
+        // part matches one of
+        //   36_tooth_gear, 24_tooth_gear, 20_tooth_gear
+        //   16_tooth_gear, 12_tooth_gear, 8_tooth_gear
+        std::cout << "is type gear\n";
+        match_->possibleMatch = new MatchParams("8_tooth_gear");
+        // actual match = (grip_width > 20 ? 12_tooth : 8_tooth)
+        match_->condition = "grip_width";
+        match_->comparison = ">";
+        match_->match = "12_tooth_gear";
+        match_->val = 20;
+        match_->possibleMatch = new MatchParams(*match_);
+        // actual match = (grip_width > 30 ? 16_tooth : 12_tooth)
+        match_->match = "16_tooth_gear";
+        match_->val = 30;
+        match_->possibleMatch = new MatchParams(*match_);
+        // actual match = (grip_width > 40 ? 20_tooth : 16_tooth)
+        match_->match = "20_tooth_gear";
+        match_->val = 40;
+        match_->possibleMatch = new MatchParams(*match_);
+        // actual match = (grip_width > 52 ? 24_tooth : 20_tooth)
+        match_->match = "24_tooth_gear";
+        match_->val = 52;
+        match_->possibleMatch = new MatchParams(*match_);
+        // actual match = (grip_width > 70 ? 36_tooth : 24_tooth)
+        match_->match = "36_tooth_gear";
+        match_->val = 70;        
+    }
+    /*else if ( _is_type(part, "double_pin") ) {
+        match_->possibleMatch = new MatchParams("peg");
+        match_->condition = "grip_width";
+        match_->comparison = ">";
+        match_->val = 20;
+    }
+    else if ( _is_type(part, "extended_peg") ) {
+        match_->possibleMatch = new MatchParams("extended_axle_peg");
+        match_->condition = "grip_width";     // width : height
+        match_->comparison = "<";
+        match_->val = 7.1;
+        match_->possibleMatch = new MatchParams(*match_);
+        match_->match = "peg";
+        match_->condition = "aspect_ratio";
+        match_->comparison = "<";
+        match_->val = 0.25;
+    }
+    else if ( _is_type(part, "peg") ) {
+        match_->possibleMatch = new MatchParams("extended_peg");
+        match_->condition = "aspect_ratio";
+        match_->comparison = ">";
+        match_->val = 0.25;
+    }*/
     return match_;
 }
 
-MatchParams ObjectClassifier::conditionalMatch(const cv::Mat& scene) 
+// tree like structure that's based on features
+// top level things is that it's round
+//  trees, heaps, using data of heap to inform decision tree
+// decision models, 
+// heuristic based searches
+// search algorithms
+// Everything is a tree
+
+MatchParams* ObjectClassifier::conditionalMatch(const cv::Mat& scene) 
 {
-    return buildMatch( match(scene) );
+    MatchParams* list = buildMatch( match(scene) );
+    //float ar = aspect_ratio();
+    //std::cout << "ASPECT RATIO: " << ar << "\n";
+    //_handleMatch("aspect_ratio", list, ar);
+    return list;
+}
+
+void ObjectClassifier::_handleMatch(const std::string condition, MatchParams* _conditionalMatch, double measuredVal) {
+    /* 
+     * When checking match,
+     *   true_match = (check compare val ? match : possibleMatch)
+     * e.g. axle
+     *   true_match = (grip_width < 15 ? axle : beam)
+     */
+    
+    // no match to handle if conditionalMatch or its possible match are null
+    //std::cout << "measured value is " << measuredVal < "\n";
+    if ( _conditionalMatch == NULL )
+        return;
+    _conditionalMatch->print();
+    if (_conditionalMatch->possibleMatch == NULL) {
+        std::cout<<"no potential matches for this part\n";
+        return;
+    }
+    // check being called is the same as the condition on the match
+    else if ( condition != _conditionalMatch->condition )
+        return;
+    
+    // else
+    std::string comp = _conditionalMatch->comparison;
+    //std::cout << "condition to check " << condition << "\n";
+    std::cout << "measured value is " << measuredVal << "\n";
+    
+    // save address of current match
+    MatchParams* temp = _conditionalMatch;
+    
+    // if condition isn't satisfied, set match to conditionalMatch
+    if (comp == "<") {
+        if (_conditionalMatch->val < measuredVal)
+            _conditionalMatch = _conditionalMatch->possibleMatch;
+    }
+    else if (comp == ">") {
+        if (_conditionalMatch->val > measuredVal)
+            _conditionalMatch = _conditionalMatch->possibleMatch;
+    }
+    else if (comp == "==") {
+        if (_conditionalMatch->val == measuredVal)
+            _conditionalMatch = _conditionalMatch->possibleMatch;
+    }
+    else if (comp == ">=") {
+        if (_conditionalMatch->val >= measuredVal)
+            _conditionalMatch = _conditionalMatch->possibleMatch;
+    }
+    else if (comp == "<=") {
+        if (_conditionalMatch->val <= measuredVal)
+            _conditionalMatch = _conditionalMatch->possibleMatch;
+    }
+    else if (comp == "!=") {
+        if (_conditionalMatch->val != measuredVal)
+            _conditionalMatch = _conditionalMatch->possibleMatch;
+    }
+    else 
+        std::cout << "Unsupported comparison in method _handleMatch() of type " << comp << "\n";
+    
+    if ( _conditionalMatch != temp ) {
+        // match was corrected based on condition, delete current
+        std::cout << "initial match corrected to " << _conditionalMatch->match << "\n";
+        delete temp;
+    }
+    else {
+        // conditional match hasn't changed -- _conditionalMatch === temp
+        // need to propagate check down list
+        temp = _conditionalMatch->possibleMatch;
+        _conditionalMatch->possibleMatch = temp->possibleMatch;
+        delete temp;
+    }
+        
+    // propagate match verification down if necessary
+    if ( _conditionalMatch->possibleMatch )
+        _handleMatch(condition, _conditionalMatch, measuredVal);
 }
 
 std::string ObjectClassifier::match(const cv::Mat& scene)
@@ -489,17 +849,20 @@ std::string ObjectClassifier::match()
             //std::cout<<window[i].imgIdx<<"\n\tdistance: "<<window[i].distance<<"\n";
             //if (_matches[i].distance < 0.5)
             ind = good_matches[i].imgIdx;
+            type = "";
             if (ind < _db_names.size())
                 type = _db_names[ind];
             // all images are named "type_iter" where iter is a number
-            type = type.substr(0, type.find_last_of("_"));
-            int j;
-            for(j = 0; j < _db_image_types.size(); j++)
-                if (_db_image_types[j] == type)
-                    break;
-            //std::cout<<"match found at index "<< j << " for "<<_db_image_types[j]<<"\n";
-            if (j < _num_matches.size())
-                _num_matches[j]++;
+            if (type != "") {
+                type = type.substr(0, type.find_last_of("_"));
+                int j;
+                for(j = 0; j < _db_image_types.size(); j++)
+                    if (_db_image_types[j] == type)
+                        break;
+                //std::cout<<"match found at index "<< j << " for "<<_db_image_types[j]<<"\n";
+                if (j < _num_matches.size())
+                    _num_matches[j]++;
+            }
             //_num_matches[good_matches[i].imgIdx]++;
             /*cv::namedWindow(window.str(), CV_WINDOW_AUTOSIZE);
             cv::drawMatches(_db_images[i], _db_keypoints[i], _scene, _query_keypoints,
@@ -512,7 +875,8 @@ std::string ObjectClassifier::match()
         maxIndex = _num_matches.size();
         for(int i = 0; i < _num_matches.size(); i++)
         {
-            std::cout<<"\n\t"<<_db_image_types[i]<<": "<<_num_matches[i];
+            if (_num_matches[i] > 0)
+                std::cout<<"\n\t"<<_db_image_types[i]<<": "<<_num_matches[i];
             if(_num_matches[i] > max)
             {
                 max = _num_matches[i];
@@ -759,7 +1123,7 @@ std::vector<std::string> ObjectClassifier::_get_files_names()
     return names;
 }
 
-std::vector<cv::Point> ObjectClassifier::_getBlob(cv::Mat& scene)
+std::vector<cv::Point> ObjectClassifier::_getBlob(const cv::Mat& scene)
 {
     // finds outline of the largest non-white object
     std::vector<cv::Point> temp(0,cv::Point(0,0));
@@ -1164,15 +1528,107 @@ std::vector<cv::Point> ObjectClassifier::corners(const std::vector<cv::Point> bl
     return corners;
 }
 
+float ObjectClassifier::aspect_ratio(std::vector< cv::Point > blob) {
+    cv::RotatedRect rect = cv::minAreaRect(blob);
+    return min (rect.size.width/rect.size.height, rect.size.height/rect.size.width );
+}
+
+float ObjectClassifier::aspect_ratio() {
+    std::vector< cv::Point > blob = _getBlob(_scene);
+    return aspect_ratio(blob);
+}
+
+bool ObjectClassifier::is_rectangular(std::vector< cv::Point > blob) {
+    ObjectModel temp;
+    return is_rectangular(blob, temp);
+}
+
+bool ObjectClassifier::is_rectangular(std::vector< cv::Point > blob, ObjectModel& model) {
+    //std::cout << blob << "\n";
+    
+    std::vector< cv::Point > approx;
+    approxPolyDP(cv::Mat(blob), approx, cv::arcLength(cv::Mat(blob), true)*0.015, true);
+    bool isIt = false;
+    
+    model.angles.clear();
+    model.minimalBlob = approx;
+    model.convex = cv::isContourConvex(approx);
+    
+    std::cout << "Convex " << (model.convex ? "true" : "false") << "\n";
+    
+    int len = approx.size();
+//     cv::Mat img(_scene);
+//     for (int i = 0; i < len; i++) {
+//         circle(img, approx[i], 1, cv::Scalar(255));
+//     }
+//     cv::imshow("approx points", img);
+//     cv::waitKey(1000);
+    std::cout << "blob size " << len << "\n";
+    
+    double maxCosine = 0;
+    for (int j = 2; j <= len; j++) {
+        double cosine = fabs(angle(approx[j%len], approx[j-2], approx[j-1]));
+        model.angles.push_back(cosine);
+        maxCosine = max(maxCosine, cosine);
+    }
+    if (len == 2)
+        model.shape = LINE;
+    else if (len == 3)
+        model.shape = TRIANGLE;
+    else if (len == 4)
+        model.shape = RECTANGLE;
+    else if (len <= 6) {
+        if (model.convex)
+            model.shape = RECTANGLE;
+    }
+    else if (len > 6){
+        // it's probably a circle, but I can recognize all circular shapes
+        //   gears, wheels, etc
+        // so don't worry about it
+    }
+    else
+        model.shape = UNKNOWN;
+    // if minimum bounding rectangle area is the same as the blob area, it's a rectangle
+    // closest shape to satisfy this but not be rectangle is a circle
+    // circle takes up 78.5% of the area of it's bounding rectangle
+    /*
+    if (ratio > 0.85){
+        if (model.convex)
+            model.shape = RECTANGLE;
+    }*/
+    
+    
+    if (fabs(maxCosine-PI/2) < 0.3)
+        isIt = true;
+    std::cout << "max cosine " << maxCosine << "\n";
+        
+    std::cout << (isIt ? "IS rectangular\n" : "is NOT rectangular\n");
+    return isIt;
+}
+
+bool ObjectClassifier::is_rectangular(const cv::Mat &img) {
+    std::vector< cv::Point > blob = _getBlob(img);
+    return is_rectangular(blob);
+}
+
 bool ObjectClassifier::is_rectangular() {
     // tries to verify that the object in scene is rectangular
-    std::vector< cv::Point > blob = _getBlob(_scene);
+    return is_rectangular(_scene);
     // now remove points from blob that aren't corners
-    blob = corners(blob);
+    /*std::vector< cv::Point > corners_;
     std::vector<int> hull;
-    convexHull(blob, hull, false, true);
     std::vector<cv::Vec4i> defects;
-    convexityDefects(blob, hull, defects);
+    try {
+        corners_ = corners(blob);
+        convexHull(blob, hull, false, true);
+        convexityDefects(blob, hull, defects);
+    }
+    catch( cv::Exception e) {
+        std::cout << "Open CV exception in ConvexityDefects() " << e.what() << "\n";
+        convexHull(blob, hull, false, true);
+        if (hull.size() > 3)
+            convexityDefects(blob, hull, defects);
+    }
     std::cout << "--" << defects.size() << " Convexity defects --\n";
     for(int i = 0; i < defects.size(); i++) {
         std::cout << defects[i][0] << " " << defects[i][1] << " ";
@@ -1193,7 +1649,7 @@ bool ObjectClassifier::is_rectangular() {
     std::vector<cv::RotatedRect> rects = rectangles(blob);
     if (rects.size() == 1)
         return true;
-    return false;
+    return false;*/
 }
 
 bool ObjectClassifier::is_circle(std::vector< cv::Point > blob)
@@ -1245,7 +1701,7 @@ bool ObjectClassifier::_is_type(std::string part, std::string type) {
 double ObjectClassifier::_dist(cv::Point2f b, cv::Point2f a)
 {
     double val = sqrt( pow((b.x - a.x), 2) + pow((b.y - a.y), 2) );
-    std::cout << "distance " << val << "\n";
+    //std::cout << "distance " << val << "\n";
     return val;
 }
 

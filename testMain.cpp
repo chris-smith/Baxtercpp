@@ -21,7 +21,7 @@ int main(int argc, char** argv) {
     }
     BaxterCamera left_cam("left_hand_camera");
     BaxterCamera right_cam("right_hand_camera");
-    left_cam.display();
+    //left_cam.display();
     right_cam.display();
     ros::spinOnce();
 //     BaxterLimb left_arm("left");
@@ -87,8 +87,8 @@ int main(int argc, char** argv) {
     endpt = right_arm.endpoint_pose();
     endpt.print("right endpoint");*/
     SearchControl search_control(&right_arm, &left_arm, &right_cam, &left_cam);
-    search_control.geometry.table_height = -.072;
-    search_control.geometry.height_offset = .12;
+    search_control.geometry.table_height = -.07;
+    search_control.geometry.height_offset = .1;
     search_control.geometry.home = right_arm.endpoint_pose();
     while( ros::ok() )
         search_control.search();

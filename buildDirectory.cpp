@@ -170,7 +170,7 @@ void remove_grippers() {
         ROS_ERROR("Unable to convert image to greyscale");
         return;
     }
-    cv::threshold(thresh, thresh,40,255,cv::THRESH_BINARY_INV); 
+    cv::threshold(thresh, thresh,50,255,cv::THRESH_BINARY_INV); 
     cv::dilate(thresh, mask, element);   
     cv::dilate(mask, mask, element);
     

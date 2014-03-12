@@ -26,12 +26,12 @@ int main(int argc, char** argv) {
     BaxterCamera left_cam("left_hand_camera");
     left_cam.display();
     ros::spinOnce();
-    std::cout<<"Setting up left_cam...\n";
+    /*std::cout<<"Setting up left_cam...\n";
     left_cam.resolution(Resolution(320,200));
     left_cam.half_resolution(false);
     left_cam.window(Resolution(555,220)); // (570, 150)
     left_cam.gain(15);
-    
+    */
     std::cout<<"Starting trackbar...\n";
     cv::namedWindow(window_name, CV_WINDOW_AUTOSIZE);
     
