@@ -8,11 +8,21 @@
 #include "geometry_msgs/Wrench.h"
 #include "geometry_msgs/Quaternion.h"
 #include "geometry_msgs/Vector3.h"
-//#define _USE_MATH_DEFINES
-//#include <math.h>
 
-/*    Here are the types defined here
 
+/*    
+
+NOTE :     
+    This is a very inconsistently implemented set of geometric data types I use throughout my code
+    For the most part I have only implemented the things I need
+    How well its implemented varies depending on how rushed I was when I wrote it
+
+
+Here are the types defined here
+
+class JointPositions( vector<string> names, vector<double> angles );
+class JointVelocities( vector<string> names, vector<double> angles );
+class JointEfforts( vector<string> names, vector<double> angles );
 class Point{ double x; double y; double z; };
 class Quaternion{ double x; double y; double z; double w; };
 class Pose{ Point point; Quaternion quaternion; };
@@ -21,7 +31,6 @@ class Wrench{ Point force; Point torque; };
 class RPY{ double pitch; double roll; double yaw; };
 class RPYPose{ Point point; RPY rpy; };
 
-/* Define operators for structs *
 *********************************/
 namespace gm = geometry_msgs;
 
@@ -143,6 +152,8 @@ public:
     }
 private:
 };
+
+
 class JointVelocities{ 
 public:
     std::vector<std::string> names; 
@@ -244,6 +255,7 @@ public:
     }
 private:
 };
+
 bool operator<(const JointVelocities& a, const JointVelocities &b)
 {
     int asize = a.velocities.size();
@@ -268,6 +280,8 @@ bool operator>(const JointVelocities& a, const JointVelocities &b)
     }
     return ret;
 }
+
+
 class JointEfforts{
 public:
     std::vector<std::string> names;

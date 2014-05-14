@@ -64,56 +64,6 @@ public:
     }
 };
 
-class MatchParams {
-public:
-    std::string match;               // name of originally matched part
-    std::string condition;           // condition to check - e.g grip_width, aspect_ratio
-    std::string comparison;          // comparison to make on condition - e.g <, >
-    double val;                      // value used in comparison
-    MatchParams* possibleMatch;      // can chain together possible matches
-    MatchParams() : match(""),condition(""),possibleMatch(NULL),comparison(""),val(0) {}
-    MatchParams(std::string a) : match(a),condition(""),possibleMatch(NULL),comparison(""),val(0) {}
-    MatchParams(const MatchParams &a) { *this = a; };
-    
-    void print() {
-        std::cout << "\nMatch: " << match;
-        std::cout << "\nCondition: " << condition;
-        std::cout << "\nComparison: " << comparison;
-        std::cout << "\nValue: " << val;
-        std::cout << "\nNextMatch: " << (possibleMatch == NULL ? "Null" : "" );
-        if (possibleMatch)
-            possibleMatch->print();
-        std::cout << "\n";
-    };
-    
-    // operators
-    MatchParams& operator=(const MatchParams &rhs) {
-        if (this != &rhs) {
-            this->match = rhs.match;
-            this->condition = rhs.condition;
-            this->comparison = rhs.comparison;
-            this->val = rhs.val;
-            this->possibleMatch = rhs.possibleMatch;
-        }
-        return *this;
-    };
-    bool operator==(const MatchParams &rhs) const {
-        if (this->match != rhs.match)
-            return false;
-        else if (this->condition != rhs.condition)
-            return false;
-        else if (this->comparison != rhs.comparison)
-            return false;
-        else if (this->val != rhs.val)
-            return false;
-        return true;
-    };
-    bool operator!=(const MatchParams &rhs) const {
-        return !(*this == rhs);
-    };
-private:
-};
-
 class Line {
 public:
     Line() : pt1(), pt2() {}
@@ -161,8 +111,6 @@ public:
     void save_scene(std::string);
     void save_scene(std::string, const cv::Mat&);
     void reload();                      // reload db
-    
-    MatchParams* buildMatch(const std::string);
     
     bool is_circle( std::vector< cv::Point > );
     bool is_rectangular();
@@ -226,8 +174,7 @@ private:
     void _handleMatch(const std::string, MatchParams*, double);
 };
 
-ObjectClassifier::ObjectClassifier(std::string path)
-{
+ObjectClassifier::ObjectClassifier(std::string path) {
     std::cout<<"OpenCV Version: "<<CV_VERSION<<"\n";
     std::cout<<"--------------------------\n";
     _min_hessian = 300;
@@ -240,8 +187,7 @@ ObjectClassifier::ObjectClassifier(std::string path)
     _train_matcher();
 }
 
-ObjectClassifier::ObjectClassifier(std::string path, int min_hessian)
-{
+ObjectClassifier::ObjectClassifier(std::string path, int min_hessian) {
     std::cout<<"OpenCV Version: "<<CV_VERSION<<"\n";
     std::cout<<"--------------------------\n";
     _min_hessian = min_hessian;
@@ -254,8 +200,7 @@ ObjectClassifier::ObjectClassifier(std::string path, int min_hessian)
     _train_matcher();
 }
 
-ObjectClassifier::ObjectClassifier(std::string path, bool load)
-{
+ObjectClassifier::ObjectClassifier(std::string path, bool load) {
     _min_hessian = 300;
     _db_images.clear();
     _valid_path = false;
@@ -268,31 +213,27 @@ ObjectClassifier::ObjectClassifier(std::string path, bool load)
     }
 }
 
-void ObjectClassifier::_set_valid_types()
-{
+void ObjectClassifier::_set_valid_types() {
+    // image types to load
     _valid_types.push_back("jpg");
     _valid_types.push_back("jpeg");
     _valid_types.push_back("png");
 }
 
-void ObjectClassifier::_check_path(std::string& path)
-{
+void ObjectClassifier::_check_path(std::string& path) {
+    // ensure path provides a valid directory
     unsigned tilda = path.find("~");
-    if (tilda != std::string::npos)
-    {
+    if (tilda != std::string::npos) {
         ROS_ERROR("Object Classifier needs to be passed a complete path. Can not include [~]");
         return;
     }
     unsigned loc = path.find_last_of(".");
-    if (loc != std::string::npos)
-    {
+    if (loc != std::string::npos) {
         char prev = path[loc-1];
-        if (prev != '\\' || prev != '/')
-        {
+        if (prev != '\\' || prev != '/') {
             // path provided is a file rather than a directory
             unsigned dir = path.find_last_of("/");
-            if (dir != std::string::npos)
-            {
+            if (dir != std::string::npos) {
                 if (dir < loc)
                     path.erase(dir, path.length()-dir);
                 ROS_WARN("You have provided the ObjectClassifier with a file path rather than a location. Image database will be built from the folder containing the file");
@@ -300,8 +241,7 @@ void ObjectClassifier::_check_path(std::string& path)
         }
     }
     _db_dir = opendir(path.c_str());
-    if (_db_dir == NULL)
-    {
+    if (_db_dir == NULL) {
         ROS_ERROR("The directory [%s] cannot be accessed", path.c_str());
         return;
     }
@@ -313,41 +253,13 @@ void ObjectClassifier::_check_path(std::string& path)
     ROS_INFO("Will search path [%s] for images", _dir_path.c_str());
 }
 
-void ObjectClassifier::_load_images()
-{
+void ObjectClassifier::_load_images() {
     /* 
-     * This should become a public function. It should clear the db's and
-     * call _load_images_recurse on _dir_path
+     * This should become a public function. 
+     * This clears the db's and
+     * calls _load_images_recurse on _dir_path
      * 
      * ********************************************************************/
-    if (!_valid_path)
-        return;
-    cv::Mat temp;
-    dirent* dp;
-    unsigned file_type_loc;
-    std::string file_name;
-    std::string extension;
-    std::vector<std::string>::iterator it;
-    while ((dp = readdir(_db_dir)) != NULL)
-    {
-        file_name = dp->d_name;
-        file_type_loc = file_name.find_last_of(".");
-        if (file_type_loc == std::string::npos)
-            continue;
-        extension = file_name.substr(file_type_loc);
-        
-        it = std::find(_valid_types.begin(), _valid_types.end(), extension.substr(1));
-        if (it == _valid_types.end())
-            continue;
-        std::cout<<"file name: "<<file_name<<"\n";
-        //if (_dir_path.find_last_of("/") != _dir_path.size()-1)
-        //    _dir_path += '/';
-        temp = cv::imread(_dir_path+"/"+file_name);
-        //cv::imshow("loading image", temp);
-        //cv::waitKey(500);
-        _db_images.push_back(temp);
-        _db_names.push_back(file_name);
-    }
     _db_images.clear();
     _db_names.clear();
     _load_images_recurse(_dir_path);
@@ -355,10 +267,11 @@ void ObjectClassifier::_load_images()
     cv::destroyWindow("loading image");
 }
 
-void ObjectClassifier::_load_images_recurse(std::string path)
-{
+void ObjectClassifier::_load_images_recurse(std::string path) {
+    // recursively move through folder structure to build image database
     if (!_valid_path || (path.find_last_of(".") != std::string::npos))
         return;
+        
     cv::Mat temp;
     dirent* dp;
     unsigned file_type_loc;
@@ -370,32 +283,40 @@ void ObjectClassifier::_load_images_recurse(std::string path)
     std::string folder_name("");
     int iter(0);
     
+    // trim any trailing /'s
     file_type_loc = path.find_last_of("/");
     if (file_type_loc == path.size()-1)
         path = path.substr(0, file_type_loc);
+        
     if (path != _dir_path){
         // if the current path is not the main path for the directory
         // add a new image type
         file_type_loc = path.find_last_of("/");
-        if (file_type_loc == path.size()-1){
+        // this check is probably unnecessary -- already trimmed trailing /'s
+        if (file_type_loc == path.size()-1) {
             file_type_loc = path.find_last_of("/", path.size()-2);
         }
+        // get folder name, add to list of image types
         folder_name = path.substr(file_type_loc+1);
         _db_image_types.push_back(folder_name);
         _is_home = false;
     }
+    
+    // open directory, read while it still has any contents
     dir = opendir(path.c_str());
-    while ((dp = readdir(dir)) != NULL)
-    {
+    while ((dp = readdir(dir)) != NULL) {
         file_name = dp->d_name;
-        if(_is_home){
+        if(_is_home) {
             // if in home directory, recursively load files from
             // each folder -- don't load files from home directory
             file_type_loc = file_name.find_last_of(".");
             if (file_type_loc != std::string::npos)
                 continue;
+            // add '/' to end of path if necessary
+            //   should always be necessary...
             if (path.find_last_of("/") != path.size()-1)
                 path += '/';
+                
             // don't load images whose name starts with '_'
             if (file_name[0] != '_') {
                  _num_types++;
@@ -406,14 +327,17 @@ void ObjectClassifier::_load_images_recurse(std::string path)
             // if not in home directory, load all images
             // of correct file types
             
+            // get current file type
             file_type_loc = file_name.find_last_of(".");
             if (file_type_loc == std::string::npos)
                 continue;
             extension = file_name.substr(file_type_loc);
-            
+            // check that file type is valid
             it = std::find(_valid_types.begin(), _valid_types.end(), extension.substr(1));
             if (it == _valid_types.end())
                 continue;
+            
+            // open image at the path, add to database
             temp = cv::imread(path+"/"+file_name);
             if(temp.size() == cv::Size(0,0))
                 continue;
@@ -430,48 +354,48 @@ void ObjectClassifier::_load_images_recurse(std::string path)
         std::cout<<"Loaded "<<_db_image_types.size()<<" types\n";
 }
 
-void ObjectClassifier::scene(const cv::Mat& scene)
-{
+void ObjectClassifier::scene(const cv::Mat& scene) {
+    // sets a new image to match against
+    // extracts descriptors, shows view
     _scene = scene;
     cv::SiftFeatureDetector _detector(_min_hessian);
     cv::SiftDescriptorExtractor _extractor;
     _detector.detect(_scene, _query_keypoints);
     _extractor.compute(_scene, _query_keypoints, _query_descriptors);
-    //std::cout<<"scene descriptors: "<<_query_descriptors.size()<<"\n";
+    
     cv::imshow("Classifier View",_scene);
 }
 
-void ObjectClassifier::_train_matcher()
-{
+void ObjectClassifier::_train_matcher() {
+    // trains the matcher on the image database
+    
     cv::SiftFeatureDetector _detector(_min_hessian);
     cv::SiftDescriptorExtractor _extractor;
     std::cout<<"Detecting keypoints...\n";
-    if(_db_images.size() == 0){
+    if(_db_images.size() == 0) {
         ROS_ERROR("Image Database is empty. Unable to train matcher");
         return;
     }
     _detector.detect(_db_images, _db_keypoints);
+    
     std::cout<<"Extracting descriptors...\n";
     _extractor.compute(_db_images, _db_keypoints, _db_descriptors);
-    for(int i = 0; i < _db_descriptors.size(); i++)
-    {
+    for(int i = 0; i < _db_descriptors.size(); i++) {
         if(_db_descriptors[i].empty())
             ROS_ERROR("Missing descriptors");
-            //cvError(0, "Train Matcher","Descriptor Empty -- Check file path", __FILE__,__LINE__);
     }
+    
     _matcher.add(_db_descriptors);
     std::cout<<"Training matcher...\n";
     _matcher.train();
     std::cout<<"Training Complete!\n";
 }
 
-bool inRange(double measured, double desired, double tolerance) {
-    return fabs(measured-desired) <= tolerance;
-}
-
 std::string ObjectClassifier::getFinalDecision(ObjectModel model, std::string part) {
     // tries to make a final decision about what the object actually is
     // the model is built from geometric data gathered about the object
+    // similar to a classification tree -- not really one though
+    //   ideally this wouldn't be hardcoded...
     std::string finalDecision;
     finalDecision = part;
     if ( _is_type(part, "gear") ) {
@@ -600,239 +524,35 @@ std::string ObjectClassifier::getFinalDecision(ObjectModel model, std::string pa
     return finalDecision;
 }
 
-/*  std::string check;               // condition to check - e.g grip_width
-    std::string match;               // name of originally matched part
-    std::string possibleMatch;       // name of possible match
-    std::string comparison;          // comparison to make on condition - e.g <, >
-    double val; 
-*/
-
-MatchParams* ObjectClassifier::buildMatch(const std::string part) {
-    /* 
-     * When checking match,
-     *   true_match = (check compare val ? match : possibleMatch)
-     * e.g. axle
-     *   true_match = (grip_width < 15 ? axle : beam)
-     */
-    MatchParams* match_ = new MatchParams(part);
-    return match_;
-    bool rectangular = is_rectangular();
-    if ( part == "" ) {
-        if ( rectangular ) {
-            match_->match = "4_axle";
-            match_->condition = "grip_width";
-            match_->comparison = "<";
-            match_->val = 13;
-            match_->possibleMatch = new MatchParams("UNKNOWN_PIECE");
-        }
-    }
-    else if ( _is_type(part, "extended_axle_peg") ) {
-        match_->possibleMatch = new MatchParams("extended_peg");
-        match_->condition = "grip_width";
-        match_->comparison = ">";
-        match_->val = 7.1;
-    }
-    else if ( _is_type(part, "axle") ) {
-        std::cout << " is type axle \n";
-        match_->condition = "grip_width";
-        match_->possibleMatch = new MatchParams("3_beam");        // or any beam
-        match_->comparison = "<";
-        match_->val = 13;
-    }
-    else if ( _is_type(part, "beam") ) {
-        // beam is also frequently confused with 4210857
-        //  not sure what check I could do to distinguish with that
-        std::cout << " is type beam \n";
-        if ( rectangular ) {
-            match_->condition = "grip_width";
-            match_->possibleMatch = new MatchParams("3_axle");        // or any axle
-            match_->comparison = ">";
-            match_->val = 13;
-        }
-        else
-            match_->match = "4_6_beam";           // or any bent beam
-    }
-    else if ( _is_type(part, "40_tooth_gear") ) {
-        match_->possibleMatch = new MatchParams("24_tooth_gear");
-        match_->condition = "grip_width";
-        match_->comparison = ">";
-        match_->val = 60;
-    }
-    else if( _is_type(part, "gear") && !_is_type(part, "40_tooth") &&
-             !_is_type(part, "worm") && !_is_type(part, "crown") ) {
-        // part matches one of
-        //   36_tooth_gear, 24_tooth_gear, 20_tooth_gear
-        //   16_tooth_gear, 12_tooth_gear, 8_tooth_gear
-        std::cout << "is type gear\n";
-        match_->possibleMatch = new MatchParams("8_tooth_gear");
-        // actual match = (grip_width > 20 ? 12_tooth : 8_tooth)
-        match_->condition = "grip_width";
-        match_->comparison = ">";
-        match_->match = "12_tooth_gear";
-        match_->val = 20;
-        match_->possibleMatch = new MatchParams(*match_);
-        // actual match = (grip_width > 30 ? 16_tooth : 12_tooth)
-        match_->match = "16_tooth_gear";
-        match_->val = 30;
-        match_->possibleMatch = new MatchParams(*match_);
-        // actual match = (grip_width > 40 ? 20_tooth : 16_tooth)
-        match_->match = "20_tooth_gear";
-        match_->val = 40;
-        match_->possibleMatch = new MatchParams(*match_);
-        // actual match = (grip_width > 52 ? 24_tooth : 20_tooth)
-        match_->match = "24_tooth_gear";
-        match_->val = 52;
-        match_->possibleMatch = new MatchParams(*match_);
-        // actual match = (grip_width > 70 ? 36_tooth : 24_tooth)
-        match_->match = "36_tooth_gear";
-        match_->val = 70;        
-    }
-    /*else if ( _is_type(part, "double_pin") ) {
-        match_->possibleMatch = new MatchParams("peg");
-        match_->condition = "grip_width";
-        match_->comparison = ">";
-        match_->val = 20;
-    }
-    else if ( _is_type(part, "extended_peg") ) {
-        match_->possibleMatch = new MatchParams("extended_axle_peg");
-        match_->condition = "grip_width";     // width : height
-        match_->comparison = "<";
-        match_->val = 7.1;
-        match_->possibleMatch = new MatchParams(*match_);
-        match_->match = "peg";
-        match_->condition = "aspect_ratio";
-        match_->comparison = "<";
-        match_->val = 0.25;
-    }
-    else if ( _is_type(part, "peg") ) {
-        match_->possibleMatch = new MatchParams("extended_peg");
-        match_->condition = "aspect_ratio";
-        match_->comparison = ">";
-        match_->val = 0.25;
-    }*/
-    return match_;
-}
-
-// tree like structure that's based on features
-// top level things is that it's round
-//  trees, heaps, using data of heap to inform decision tree
-// decision models, 
-// heuristic based searches
-// search algorithms
-// Everything is a tree
-
-MatchParams* ObjectClassifier::conditionalMatch(const cv::Mat& scene) 
-{
-    MatchParams* list = buildMatch( match(scene) );
-    //float ar = aspect_ratio();
-    //std::cout << "ASPECT RATIO: " << ar << "\n";
-    //_handleMatch("aspect_ratio", list, ar);
-    return list;
-}
-
-void ObjectClassifier::_handleMatch(const std::string condition, MatchParams* _conditionalMatch, double measuredVal) {
-    /* 
-     * When checking match,
-     *   true_match = (check compare val ? match : possibleMatch)
-     * e.g. axle
-     *   true_match = (grip_width < 15 ? axle : beam)
-     */
-    
-    // no match to handle if conditionalMatch or its possible match are null
-    //std::cout << "measured value is " << measuredVal < "\n";
-    if ( _conditionalMatch == NULL )
-        return;
-    _conditionalMatch->print();
-    if (_conditionalMatch->possibleMatch == NULL) {
-        std::cout<<"no potential matches for this part\n";
-        return;
-    }
-    // check being called is the same as the condition on the match
-    else if ( condition != _conditionalMatch->condition )
-        return;
-    
-    // else
-    std::string comp = _conditionalMatch->comparison;
-    //std::cout << "condition to check " << condition << "\n";
-    std::cout << "measured value is " << measuredVal << "\n";
-    
-    // save address of current match
-    MatchParams* temp = _conditionalMatch;
-    
-    // if condition isn't satisfied, set match to conditionalMatch
-    if (comp == "<") {
-        if (_conditionalMatch->val < measuredVal)
-            _conditionalMatch = _conditionalMatch->possibleMatch;
-    }
-    else if (comp == ">") {
-        if (_conditionalMatch->val > measuredVal)
-            _conditionalMatch = _conditionalMatch->possibleMatch;
-    }
-    else if (comp == "==") {
-        if (_conditionalMatch->val == measuredVal)
-            _conditionalMatch = _conditionalMatch->possibleMatch;
-    }
-    else if (comp == ">=") {
-        if (_conditionalMatch->val >= measuredVal)
-            _conditionalMatch = _conditionalMatch->possibleMatch;
-    }
-    else if (comp == "<=") {
-        if (_conditionalMatch->val <= measuredVal)
-            _conditionalMatch = _conditionalMatch->possibleMatch;
-    }
-    else if (comp == "!=") {
-        if (_conditionalMatch->val != measuredVal)
-            _conditionalMatch = _conditionalMatch->possibleMatch;
-    }
-    else 
-        std::cout << "Unsupported comparison in method _handleMatch() of type " << comp << "\n";
-    
-    if ( _conditionalMatch != temp ) {
-        // match was corrected based on condition, delete current
-        std::cout << "initial match corrected to " << _conditionalMatch->match << "\n";
-        delete temp;
-    }
-    else {
-        // conditional match hasn't changed -- _conditionalMatch === temp
-        // need to propagate check down list
-        temp = _conditionalMatch->possibleMatch;
-        _conditionalMatch->possibleMatch = temp->possibleMatch;
-        delete temp;
-    }
-        
-    // propagate match verification down if necessary
-    if ( _conditionalMatch->possibleMatch )
-        _handleMatch(condition, _conditionalMatch, measuredVal);
-}
-
-std::string ObjectClassifier::match(const cv::Mat& scene)
-{
+std::string ObjectClassifier::match(const cv::Mat& scene) {
+    // tries to match provided image to the database
     this->scene(scene);
     std::string resp = this->match();
-    buildMatch(resp);
     return resp;
 }
 
-std::string ObjectClassifier::match()
-{
+std::string ObjectClassifier::match() {
+    // matches this object's _scene image against the database
     int max = 0;
     int maxIndex;
     if (_query_descriptors.empty())
         ROS_ERROR("Unable to find any descriptors in the image");
     else{
+        // match
         _matcher.match(_query_descriptors, _matches);
-        std::vector<cv::DMatch> good_matches; //distance should be less than .5???
+        std::vector<cv::DMatch> good_matches; 
         cv::Mat match_img;
         std::vector<uint> _num_matches(_db_image_types.size(), 0);
         std::stringstream window("match");
-        //<< "match ";
+        
+        // find min, max dists for all matches
         double max_dist = 0; double min_dist = 100;
-        for(int i = 0; i < _matches.size(); i++)
-        {
+        for(int i = 0; i < _matches.size(); i++) {
             double dist = _matches[i].distance;
             if (dist < min_dist) min_dist = dist;
             if (dist > max_dist) max_dist = dist;
         }
+        // only keep some matches -- the good ones
         for(int i = 0; i < _matches.size(); i++)
         {
             if(_matches[i].distance < 3*min_dist)
@@ -842,82 +562,68 @@ std::string ObjectClassifier::match()
         std::cout<<"Total number of matches: "<<good_matches.size()<<"\n";
         std::vector<std::string>::iterator it;
         int ind;
-        for(int i = 0; i < good_matches.size(); i++)
-        {
-            //std::cout<<"Match "<<i<<"\n\tqueryIdx: "<<window[i].queryIdx<<"\n\t";
-            //std::cout<<"trainIdx: "<<window[i].trainIdx<<"\n\timgIdx: ";
-            //std::cout<<window[i].imgIdx<<"\n\tdistance: "<<window[i].distance<<"\n";
-            //if (_matches[i].distance < 0.5)
+        // get counts on the good matches by image type
+        for(int i = 0; i < good_matches.size(); i++) {
+            // get the database index of this match
             ind = good_matches[i].imgIdx;
             type = "";
+            // get the image name from the database index
             if (ind < _db_names.size())
                 type = _db_names[ind];
             // all images are named "type_iter" where iter is a number
             if (type != "") {
                 type = type.substr(0, type.find_last_of("_"));
                 int j;
-                for(j = 0; j < _db_image_types.size(); j++)
+                // iterate through directory image types to get index
+                for(j = 0; j < _db_image_types.size(); j++) {
                     if (_db_image_types[j] == type)
                         break;
-                //std::cout<<"match found at index "<< j << " for "<<_db_image_types[j]<<"\n";
+                }
+                // increment number of matches for that image type
                 if (j < _num_matches.size())
                     _num_matches[j]++;
             }
-            //_num_matches[good_matches[i].imgIdx]++;
-            /*cv::namedWindow(window.str(), CV_WINDOW_AUTOSIZE);
-            cv::drawMatches(_db_images[i], _db_keypoints[i], _scene, _query_keypoints,
-                            good_matches, match_img, cv::Scalar::all(-1), cv::Scalar::all(-1),
-                            std::vector<char>(), cv::DrawMatchesFlags::NOT_DRAW_SINGLE_POINTS);
-            cv::imshow(window.str(), match_img);
-            cv::waitKey(1000);*/
         }
+        // find the image type with the most matches
         std::cout<<"\nNumber of matches";
         maxIndex = _num_matches.size();
-        for(int i = 0; i < _num_matches.size(); i++)
-        {
+        for(int i = 0; i < _num_matches.size(); i++) {
             if (_num_matches[i] > 0)
                 std::cout<<"\n\t"<<_db_image_types[i]<<": "<<_num_matches[i];
-            if(_num_matches[i] > max)
-            {
+            if(_num_matches[i] > max) {
                 max = _num_matches[i];
                 maxIndex = i;
             }
         }
     }
+    // return name of image with the most matches, if there are at least a few
     if (max > 2){
-        cv::Mat temp;
         std::cout<<"\nI think this piece matches with "<<_db_image_types[maxIndex]<<"\n";
-        //cv::imshow("Matching image",_db_images[maxIndex]);
-        //cv::drawMatches(_db_images[maxIndex], _db_keypoints[maxIndex], _scene, _query_keypoints,
-        //                   _matches, temp, cv::Scalar::all(-1), cv::Scalar::all(-1),
-        //                     std::vector<char>(), cv::DrawMatchesFlags::NOT_DRAW_SINGLE_POINTS);
-        //     cv::imshow("Match", temp);
-        //cv::waitKey(1000);
-        //cv::destroyWindow("Match");
         return _db_image_types[maxIndex];
     }
     else{
         std::cout<<"I'm not sure what I'm seeing in this picture right now...\n";
-        return "";//_save_image();   
+        return "";  
     }
     
 }
 
-void ObjectClassifier::save_scene()
-{
+void ObjectClassifier::save_scene() {
+    // save the current _scene to the database
     _save_image();
 }
 
-void ObjectClassifier::save_scene(std::string name, const cv::Mat& img)
-{
+void ObjectClassifier::save_scene(std::string name, const cv::Mat& img) {
+    // save the provided image to the database under the given name
+    
     // set scene
     this->scene(img);
     // save scene
     this->save_scene(name);
 }
 
-void ObjectClassifier::save_scene(std::string resp)
-{
+void ObjectClassifier::save_scene(std::string resp) {
+    // save the current scene at the provided name response
     bool invalid = true;
     std::string adjusted;
     std::size_t found;
@@ -925,61 +631,59 @@ void ObjectClassifier::save_scene(std::string resp)
     std::string file_name;
     std::string extension;
     std::string valid_chars("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.");
-    while(invalid && ros::ok())
-    {
+    // check that file name is valid
+    while(invalid && ros::ok()) {
+        // see if there are any invalid characters
         found = resp.find_first_not_of(valid_chars);
-        if (found != std::string::npos)
-        {
+        if (found != std::string::npos) {
             std::cout<<"There is an invalid character in your response.";
             std::cout<<" Acceptable characters are [A-Za-z0-9_]\n";
             std::cout<<"Please enter a new file name:\n";
         }
-        else
-        {
+        else {
+            // Get file extension, remove from file name
+            // it's jpg if not specified
             file_type_loc = resp.find_last_of(".");
             file_name = resp;
-            if (file_type_loc == std::string::npos)
-            {
+            if (file_type_loc == std::string::npos) {
                 extension = ".jpg";
                 file_name.substr(0, file_type_loc-1);
             }
-            else
-            {
+            else {
                 extension = file_name.substr(file_type_loc);
             }
-            //file_name +=extension;
-            //std::cout<<"Trying to name file "<<file_name<<extension<<"...\n";
+            // set invalid flag
             invalid = false;
         }
     }
+    
     bool success;
-    //file_name = file_name.substr(0, file_type_loc);
     std::stringstream ss;
     ss << _dir_path << "/" << file_name;
-    //std::cout<<"getting files at path "<<ss.str()<<"\n";
+    // get number of files at that path already
     int num_files = _get_num_files(ss.str());
-    if (num_files == 0)
-    {
+    if (num_files == 0) {
+        // if there is nothing there, create the folder
         std::string createFolderCommand = "mkdir " + ss.str();
         system(createFolderCommand.c_str());
     }    
-    //std::cout<<" There are currently "<<num_files<<" of that type\n";
+    
     try{
+        // add file to database
+        // files saved as path/name_int.jpg
         ss <<"/"<< num_files << extension;
-        //std::cout<<"saving file as " << ss.str()<<"\n";
         cv::imwrite(ss.str(), _scene);
     }
-    catch(std::runtime_error& ex)
-    {
-        fprintf(stderr, "Exception convertion image to %s format: %s\n", extension.substr(1).c_str(), ex.what());
+    catch(std::runtime_error& ex) {
+        fprintf(stderr, "Exception converting image to %s format: %s\n", extension.substr(1).c_str(), ex.what());
         return;
     }
     std::cout<<"File saved as "<<ss.str()<<"!\n";
 }
 
 
-void ObjectClassifier::reload()
-{
+void ObjectClassifier::reload() {
+    // reloads the classifier, rebuilds everything
     _db_images.clear();
     _db_names.clear();
     _db_image_types.clear();
@@ -991,8 +695,8 @@ void ObjectClassifier::reload()
     _train_matcher();
 }
 
-void ObjectClassifier::_save_image()
-{
+void ObjectClassifier::_save_image(){
+    // saves the current scene, requests user input for name
     cv::imshow("Current Scene",_scene);
     cv::waitKey(500);
     std::cout<<"Would you like to save this picture as a template?  [y/n]\n";
@@ -1005,8 +709,9 @@ void ObjectClassifier::_save_image()
         _get_name_for_image();
 }
 
-void ObjectClassifier::_get_name_for_image()
-{
+void ObjectClassifier::_get_name_for_image() {
+    // request user input in order to name image
+    // very similar to save_scene() except it queries the user directly
     bool invalid = true;
     std::string resp;
     std::string adjusted;
@@ -1016,18 +721,15 @@ void ObjectClassifier::_get_name_for_image()
     std::string extension;
     std::string valid_chars("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.");
     std::cout<<"What type is this?\n";
-    while(invalid && ros::ok())
-    {
+    while(invalid && ros::ok()) {
         std::cin >> resp;
         found = resp.find_first_not_of(valid_chars);
-        if (found != std::string::npos)
-        {
+        if (found != std::string::npos) {
             std::cout<<"There is an invalid character in your response.";
             std::cout<<" Acceptable characters are [A-Za-z0-9_]\n";
             std::cout<<"Please enter a new file name:\n";
         }
-        else
-        {
+        else {
             file_type_loc = resp.find_last_of(".");
             file_name = resp;
             if (file_type_loc == std::string::npos)
@@ -1045,13 +747,12 @@ void ObjectClassifier::_get_name_for_image()
         }
     }
     bool success;
-    //file_name = file_name.substr(0, file_type_loc);
+    
     std::stringstream ss;
     ss << _dir_path << "/" << file_name;
     std::cout<<"getting files at path "<<ss.str()<<"\n";
     int num_files = _get_num_files(ss.str());
-    if (num_files == 0)
-    {
+    if (num_files == 0) {
         std::string createFolderCommand = "mkdir " + ss.str();
         system(createFolderCommand.c_str());
     }    
@@ -1061,8 +762,7 @@ void ObjectClassifier::_get_name_for_image()
         //std::cout<<"saving file as " << ss.str()<<"\n";
         cv::imwrite(ss.str(), _scene);
     }
-    catch(std::runtime_error& ex)
-    {
+    catch(std::runtime_error& ex) {
         fprintf(stderr, "Exception convertion image to %s format: %s\n", extension.substr(1).c_str(), ex.what());
         return;
     }
@@ -1070,28 +770,31 @@ void ObjectClassifier::_get_name_for_image()
     
 }
 
-int ObjectClassifier::_get_num_files(std::string path)
-{
+int ObjectClassifier::_get_num_files(std::string path) {
+    // get the number of files at the specified path
+    
+    // open the directory
     DIR* dir;
-    //std::cout<<"Getting number of files at path "<<path<<"\n";
     dir = opendir(path.c_str());
     dirent* dp;
     unsigned file_type_loc;
     std::string file_name;
     std::string extension;
     std::vector<std::string>::iterator it;
+    // if the directory doesn't exist, return 0
     if (dir == NULL)
         return 0;
+    
     int num_files = 0;
-    while ((dp = readdir(dir)) != NULL)
-    {
+    // while there are still files in the directory
+    while ((dp = readdir(dir)) != NULL) {
+        // get file name and extension
         file_name = dp->d_name;
-        //std::cout<<file_name<<"\n";
         file_type_loc = file_name.find_last_of(".");
         if (file_type_loc == std::string::npos)
             continue;
         extension = file_name.substr(file_type_loc);
-        
+        // if this is a valid image type, increment the number of files
         it = std::find(_valid_types.begin(), _valid_types.end(), extension.substr(1));
         if (it == _valid_types.end())
             continue;
@@ -1100,8 +803,8 @@ int ObjectClassifier::_get_num_files(std::string path)
     return num_files;
 }
 
-std::vector<std::string> ObjectClassifier::_get_files_names()
-{
+std::vector<std::string> ObjectClassifier::_get_files_names() {
+    // DEPRECATED??
     std::vector<std::string> names;
     if (!_valid_path)
         return names;
@@ -1123,8 +826,23 @@ std::vector<std::string> ObjectClassifier::_get_files_names()
     return names;
 }
 
-std::vector<cv::Point> ObjectClassifier::_getBlob(const cv::Mat& scene)
-{
+bool ObjectClassifier::_is_type(std::string part, std::string type) {
+    /*
+     * checks if the part is of the specified type
+     *  e.g part is "3_axle"
+     *     _is_type("3_axle", "axle") is true
+     *     _is_type("3_axle", "beam") is false
+     */
+    std::size_t found = part.find(type);
+    if ( found != std::string::npos)
+        return true;
+    return false;
+}
+
+/* EVERYTHING AFTER THIS IS A LOT OF EXPERIMENTING
+***************************************************/
+
+std::vector<cv::Point> ObjectClassifier::_getBlob(const cv::Mat& scene) {
     // finds outline of the largest non-white object
     std::vector<cv::Point> temp(0,cv::Point(0,0));
     if (scene.empty())
@@ -1614,46 +1332,9 @@ bool ObjectClassifier::is_rectangular(const cv::Mat &img) {
 bool ObjectClassifier::is_rectangular() {
     // tries to verify that the object in scene is rectangular
     return is_rectangular(_scene);
-    // now remove points from blob that aren't corners
-    /*std::vector< cv::Point > corners_;
-    std::vector<int> hull;
-    std::vector<cv::Vec4i> defects;
-    try {
-        corners_ = corners(blob);
-        convexHull(blob, hull, false, true);
-        convexityDefects(blob, hull, defects);
-    }
-    catch( cv::Exception e) {
-        std::cout << "Open CV exception in ConvexityDefects() " << e.what() << "\n";
-        convexHull(blob, hull, false, true);
-        if (hull.size() > 3)
-            convexityDefects(blob, hull, defects);
-    }
-    std::cout << "--" << defects.size() << " Convexity defects --\n";
-    for(int i = 0; i < defects.size(); i++) {
-        std::cout << defects[i][0] << " " << defects[i][1] << " ";
-        std::cout << defects[i][2] << " " << defects[i][3] << "\n";
-    }
-    std::cout << "--End of Convexity Defects--\n";
-    if (defects.size() < 2)
-        return true;
-    return false;
-    
-    // tries to find rectangles within blob
-    cv::Mat img(_scene);
-    cv::Scalar color(255, 0, 0);
-    for (int i = 0; i < blob.size(); i++)
-        circle(img, blob[i], 1, color);
-    cv::imshow("points", img);
-    cv::waitKey(2000);
-    std::vector<cv::RotatedRect> rects = rectangles(blob);
-    if (rects.size() == 1)
-        return true;
-    return false;*/
 }
 
-bool ObjectClassifier::is_circle(std::vector< cv::Point > blob)
-{
+bool ObjectClassifier::is_circle(std::vector< cv::Point > blob) {
     int size = blob.size();
     // get center of blob
     int x = 0;
@@ -1685,21 +1366,8 @@ bool ObjectClassifier::is_circle(std::vector< cv::Point > blob)
     return false;
 }
 
-bool ObjectClassifier::_is_type(std::string part, std::string type) {
-    /*
-     * checks if the part is of the specified type
-     *  e.g part is "3_axle"
-     *     _is_type("3_axle", "axle") is true
-     *     _is_type("3_axle", "beam") is false
-     */
-    std::size_t found = part.find(type);
-    if ( found != std::string::npos)
-        return true;
-    return false;
-}
-
-double ObjectClassifier::_dist(cv::Point2f b, cv::Point2f a)
-{
+double ObjectClassifier::_dist(cv::Point2f b, cv::Point2f a) {
+    // get distance between 2 points
     double val = sqrt( pow((b.x - a.x), 2) + pow((b.y - a.y), 2) );
     //std::cout << "distance " << val << "\n";
     return val;

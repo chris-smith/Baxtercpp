@@ -13,8 +13,7 @@
 #ifndef BACKGROUND_CONTROLLER_H
 #define BACKGROUND_CONTROLLER_H
 
-class BackgroundController : public Thread
-{
+class BackgroundController : public Thread {
 public:
     BackgroundController(BaxterLimb*);
     BackgroundController(std::string);
@@ -23,9 +22,7 @@ public:
     virtual void *run() {
         _running = true;
         ros::Rate r(_hz);
-        while( _running && ros::ok() )
-        {
-            //std::cout<<"running thread "<<this->self()<<" ";
+        while( _running && ros::ok() ) {
             if ( _run )
                 runBackgroundController();
             r.sleep();
@@ -58,12 +55,6 @@ private:
     // multiply all limb gains by this
     double _gainRatio;
     
-    // threading
-    /*std::thread* _thread;
-    void _resetThread();
-    void _deleteThread();
-    void _runThread();*/
-    
     // used to calculate, set joint velocities
     JointPositions _desired;  // desired position
     ros::Time _last;     // = ros::Time::now();
@@ -81,73 +72,62 @@ private:
     std::vector<double> _compute_output();    
 };
 
-BackgroundController::BackgroundController()
-{
+BackgroundController::BackgroundController() {
     // this shouldn't happen, needs the limb
 }
 
-BackgroundController::BackgroundController(BaxterLimb* limb)
-{
+BackgroundController::BackgroundController(BaxterLimb* limb) {
     _limb = limb;
     _setup();
 }
 
-BackgroundController::BackgroundController(std::string side)
-{
+BackgroundController::BackgroundController(std::string side) {
     _limb = new BaxterLimb(side);
     _setup();
     
 }
 
-void BackgroundController::_setup()
-{
+void BackgroundController::_setup() {
     _hz = 100;
+    
     // size vectors appropriately
     int num = _limb->joint_angles().size();
     _previous_error.resize(num, 0);
     _integral.resize(num, 0);
     _derivative.resize(num, 0);
     _last_vel.resize(num, 0);
+    
     // we don't start running immediately
     _running = false;
     _run = false;
     _gainRatio = .2;
-    //std::cout<<"basic setup complete\n";
-    // ensure thread starts at NULL
-    //_thread = NULL;
-    //this->start();
 }
 
-BackgroundController::~BackgroundController()
-{
+BackgroundController::~BackgroundController() {
     // tells limb to exit gracefully, deletes thread
     _limb->exit_control_mode();
     this->join();
     //_deleteThread();
 }
 
-int BackgroundController::join() 
-{
+int BackgroundController::join() {
     // stops thread from running loop, joins thread
     _running = false;
     _run = false;
     return Thread::join();
 }
 
-int BackgroundController::detach()
-{
+int BackgroundController::detach() {
     // allows thread to run
     _running = true;
     return Thread::detach();
 }
 
-void BackgroundController::set(JointPositions newGoal)
-{
+void BackgroundController::set(JointPositions newGoal){
     // sets new goal, starts running controller on thread if not running
     if ( ros::ok() ) {
         int num = newGoal.angles.size();
-        if ( num != _integral.size() )
-        {
+        if ( num != _integral.size() ) {
             // resize if necessary
             _previous_error.resize(num, 0);
             _integral.resize(num, 0);
@@ -156,25 +136,19 @@ void BackgroundController::set(JointPositions newGoal)
         }
         // set new goal
         _desired = newGoal;
-        //_desired.print("desired position");
         
         // tell thread to run
         _run = true;
-        //if ( !_running )
-          //this->start();
     }
 }
 
-void printGains(std::vector<Gains> gains)
-{
-    for(int i = 0; i < gains.size(); i++)
-    {
+void printGains(std::vector<Gains> gains) {
+    for(int i = 0; i < gains.size(); i++) {
         std::cout<<"kp "<<gains[i].kp<<" ki "<<gains[i].ki<<" kd "<<gains[i].kd<<"\n";
     }
 }
 
-void BackgroundController::runBackgroundController()
-{
+void BackgroundController::runBackgroundController() {
     //  calculates and sets joint velocities for _limb
     
     ros::spinOnce();
@@ -210,19 +184,16 @@ void BackgroundController::runBackgroundController()
     _previous_error = _error;        
 }
 
-void BackgroundController::stop()
-{
+void BackgroundController::stop() {
     // gracefully stop the controller
     if ( ros::ok() ) {
-        //_running = false;
         _run = false;
         _limb->exit_control_mode();
         reset();
     }
 }
 
-void BackgroundController::reset()
-{
+void BackgroundController::reset() {
     // resets error states tracked for pid controller
     if ( ros::ok() ) {
         int num = _desired.angles.size();
@@ -233,13 +204,11 @@ void BackgroundController::reset()
     }
 }
 
-std::vector<double> BackgroundController::_compute_output()
-{
+std::vector<double> BackgroundController::_compute_output() {
     // calculates output signal from errors, gains
     int len = _error.size();
     std::vector<double> temp(len,0);
-    for(int i = 0; i < len; i++)
-    {
+    for(int i = 0; i < len; i++) {
         temp[i] = _error[i] * _gains[i].kp * _gainRatio;
         temp[i] += _integral[i] * _gains[i].ki * _gainRatio;
         temp[i] += _derivative[i] * _gains[i].kd * _gainRatio;
@@ -247,45 +216,9 @@ std::vector<double> BackgroundController::_compute_output()
     return temp;
 }
 
-void BackgroundController::setGainRatio(double newRatio)
-{
+void BackgroundController::setGainRatio(double newRatio) {
     _gainRatio = newRatio;
 }
-/*
-void BackgroundController::_resetThread()
-{
-    _deleteThread();
-    _thread = new std::thread(&BackgroundController::_runThread, this);
-}
 
-void BackgroundController::_deleteThread()
-{
-    // deletes thread, sets to null
-    if (_thread == NULL)
-        return;
-    // else
-    try{
-        _thread->join();
-    }
-    catch (std::system_error e) {
-        std::cout<<"Error joining thread on reset: "<<e.what()<<"\n";
-        //_thread->detach();
-    }
-    delete _thread;
-    _thread = NULL;
-}
-
-void BackgroundController::_runThread()
-{
-    _running = true;
-    while( _running && ros::ok() )
-    {
-        //std::cout<<"running thread";
-        if ( _run )
-            runBackgroundController();
-    }
-    _running = false;
-    _run = false;
-}*/
 
 #endif

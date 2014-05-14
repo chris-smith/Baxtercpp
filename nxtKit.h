@@ -1,15 +1,25 @@
+/*
+
+This class contains data about the pieces contained within an NXT kit
+    -- which pieces it holds
+    -- where they are within the kit
+    -- provide coordinate locations for depositing pieces relative to baxter
+    
+*/
+
 #ifndef NXT_KIT_H
 #define NXT_KIT_H
 
 #include "baxterLimb.h"
 
 
-struct Container{
+struct Container {
+    // a subset of an NXT tray that holds a certain set of objects
     cv::RotatedRect rect;
     std::vector<std::string> objects;
 };
 
-class NxtKit{
+class NxtKit {
 public:
     NxtKit(cv::RotatedRect, double);
     cv::RotatedRect get_coordinates(std::string);
@@ -36,10 +46,8 @@ private:
 
 };
 
-#endif
-
-NxtKit::NxtKit(cv::RotatedRect rect, double height)
-{
+NxtKit::NxtKit(cv::RotatedRect rect, double height) {
+    // set up NXT kit based on location relative to baxter
     _box = rect;
     cv::Point2f points[4];
     rect.points(points);
@@ -51,8 +59,9 @@ NxtKit::NxtKit(cv::RotatedRect rect, double height)
     _setup_containers();
 }
 
-void NxtKit::_setup_containers()
-{
+void NxtKit::_setup_containers() {
+    // build list of containers within this kit
+    //   very tedious...
     Container _container;
     std::vector<std::string> objs;
     _container.rect = _to_rect(cv::Point2f(.015,.015), cv::Size2f(.085,.075));
@@ -195,27 +204,25 @@ void NxtKit::_setup_containers()
     objs.clear();
 }
 
-void NxtKit::show_parts() 
-{
+void NxtKit::show_parts() {
+    // print list of parts contained within this kit
     std::cout<<"\n";
-    for(int i = 0; i < _containers.size(); i++)
-    {
-        for(int j = 0; j < _containers[i].objects.size(); j++)
-        {
+    for(int i = 0; i < _containers.size(); i++) {
+        for(int j = 0; j < _containers[i].objects.size(); j++) {
             std::cout<<_containers[i].objects[j]<<"\n";
         }
     }
 }
 
-void NxtKit::show_containers()
-{
+void NxtKit::show_containers() {
+    // print list of relative locations of each container within this kit
     std::cout<<"\n";
     for(int i = 0; i < _containers.size(); i++)
         std::cout << _containers[i].rect.center << "\n";
 }
 
-cv::RotatedRect NxtKit::_to_rect(cv::Point2f origin, cv::Size2f size)
-{
+cv::RotatedRect NxtKit::_to_rect(cv::Point2f origin, cv::Size2f size) {
+    // convert a point and size to a rotated rectangle
     cv::RotatedRect rect;
     rect.angle = _box.angle;
     rect.center.x = origin.x + size.width/2;
@@ -224,28 +231,28 @@ cv::RotatedRect NxtKit::_to_rect(cv::Point2f origin, cv::Size2f size)
     return rect;
 }
 
-cv::RotatedRect NxtKit::get_coordinates(std::string part_name)
-{
-    for(int i = 0; i < _containers.size(); i++)
-    {
-        for(int j = 0; j < _containers[i].objects.size(); j++)
-        {
+cv::RotatedRect NxtKit::get_coordinates(std::string part_name) {
+    // get coordinates of dropoff for provided part name
+    // relative to baxter
+    for(int i = 0; i < _containers.size(); i++) {
+        for(int j = 0; j < _containers[i].objects.size(); j++) {
+            // if part found, return global coordinates of that part
             if(part_name == _containers[i].objects[j])
                 return _to_global( _containers[i] );
         }
     }
+    // if part not found
     return cv::RotatedRect(cv::Point2f(-1,-1), cv::Size2f(-1,-1), 0);
 }
 
-cv::RotatedRect NxtKit::_to_global(Container container) 
-{
+cv::RotatedRect NxtKit::_to_global(Container container)  {
     // returns coordinates of container relative to Baxter
-    //std::cout<<" rect center "<<container.rect.center<<"\n";
+    
     double xTemp = container.rect.center.x;
     double yTemp = container.rect.center.y;
     double x = cos(-_angle)*xTemp - sin(-_angle)*yTemp;
     double y = -sin(-_angle)*xTemp - cos(-_angle)*yTemp;
-    //std::cout<<" relative -- "<<x<<" "<<y<<"\n";
+    
     x += _origin.x;
     y += _origin.y;
     container.rect.center = cv::Point2f(x,y);
@@ -253,30 +260,28 @@ cv::RotatedRect NxtKit::_to_global(Container container)
     return container.rect;
 }
 
-bool NxtKit::contains(std::string part_name) 
-{
-    for(int i = 0; i < _containers.size(); i++)
-    {
-        for(int j = 0; j < _containers[i].objects.size(); j++)
-        {
+bool NxtKit::contains(std::string part_name) {
+    // check if the NXT kit contains the specified part
+    for(int i = 0; i < _containers.size(); i++) {
+        for(int j = 0; j < _containers[i].objects.size(); j++) {
             if(part_name == _containers[i].objects[j])
                 return true;
         }
     }
+    // if part not found
     return false;
 }
 
-double NxtKit::height()
-{
+double NxtKit::height() {
     return _origin.z;
 }
 
-gv::Point NxtKit::origin()
-{
+gv::Point NxtKit::origin() {
     return _origin;
 }
 
-double NxtKit::angle()
-{
+double NxtKit::angle() {
     return _angle;
 }
+
+#endif

@@ -9,8 +9,7 @@
 enum speed { _SLOW, _NORMAL };
 
 // this class exists to slow Baxter down when he detects people
-class BaxterSonar
-{
+class BaxterSonar {
 public:
     BaxterSonar(BaxterLimb*, BaxterLimb*);
     
@@ -38,8 +37,7 @@ private:
 };
 
 
-BaxterSonar::BaxterSonar(BaxterLimb* a, BaxterLimb* b)
-{
+BaxterSonar::BaxterSonar(BaxterLimb* a, BaxterLimb* b) {
     _arm_a = a;
     _arm_b = b;
     
@@ -52,40 +50,33 @@ BaxterSonar::BaxterSonar(BaxterLimb* a, BaxterLimb* b)
     _sub_sonar_state = _nh.subscribe("/robot/sonar/head_sonar/state",1,&BaxterSonar::_on_sonar_state, this);
 }
 
-void BaxterSonar::_on_sonar_state(const sensor_msgs::PointCloud::ConstPtr& msg)
-{
+void BaxterSonar::_on_sonar_state(const sensor_msgs::PointCloud::ConstPtr& msg) {
     pointCloud = *msg;
     std::vector< geometry_msgs::Point32 > points = msg->points;
     float x;
     float min = 10;
-    for (int i = 0; i < points.size(); i++)
-    {
+    for (int i = 0; i < points.size(); i++) {
         x = _get_distance(points[i]);
         if (x < min)
             min = x;
     }
     std::cout<<"\nclosest object: "<<min;
-    if (min <= _slow_distance)
-    {
+    if (min <= _slow_distance) {
         std::cout<<"\nSomething is too close to me\n";
-        if (current_speed)
-        {
+        if (current_speed) {
             _arm_a->set_max_velocity(slow_speed);
             _arm_b->set_max_velocity(slow_speed);
         }
     }
-    else
-    {
-        if (!current_speed)
-        {
+    else {
+        if (!current_speed) {
             _arm_a->set_max_velocity(normal_speed);
             _arm_b->set_max_velocity(normal_speed);
         }
     }
 }
 
-double BaxterSonar::_get_distance(geometry_msgs::Point32 point)
-{
+double BaxterSonar::_get_distance(geometry_msgs::Point32 point) {
     return sqrt(point.x*point.x + point.y*point.y + point.z*point.z);
 }
 
